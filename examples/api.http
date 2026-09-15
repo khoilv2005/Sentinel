@@ -1,0 +1,61 @@
+@base = http://localhost:8080
+@key = change-me-now
+
+### Health
+GET {{base}}/healthz
+
+### UI login
+POST {{base}}/api/v1/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "admin"
+}
+
+### Devices (automation using API key)
+GET {{base}}/api/v1/devices
+X-API-Key: {{key}}
+
+### Start private network scan
+POST {{base}}/api/v1/discovery/scans
+X-API-Key: {{key}}
+Content-Type: application/json
+
+{
+  "cidr": "192.168.1.0/24",
+  "site": "home-lab"
+}
+
+### Agent policies
+GET {{base}}/api/v1/agent-policies
+X-API-Key: {{key}}
+
+### Create one-use enrollment token
+# Copy the returned `token`; it is only returned at creation time.
+POST {{base}}/api/v1/agents/enrollment-tokens
+X-API-Key: {{key}}
+Content-Type: application/json
+
+{
+  "site": "home-lab",
+  "expires_in_minutes": 30,
+  "max_uses": 1
+}
+
+### Managed agents
+GET {{base}}/api/v1/agents
+X-API-Key: {{key}}
+
+### First-party UI overview API
+GET {{base}}/api/v1/ui/overview
+X-API-Key: {{key}}
+
+### Prometheus metrics
+GET {{base}}/metrics
+
+### Windows bootstrap installer
+GET {{base}}/install/windows.ps1
+
+### Linux bootstrap installer
+GET {{base}}/install/linux.sh

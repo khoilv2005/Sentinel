@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # v0.3.0 managed agents push outbound telemetry to control-api.
+  # Prometheus scrapes one central endpoint instead of opening inbound ports on endpoints.
+  - job_name: sentinel-control
+    static_configs:
+      - targets: ["control-api:8080"]
+    metrics_path: /metrics
+
+  - job_name: sentinel-blackbox-icmp
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    http_sd_configs:
+      - url: http://control-api:8080/api/v1/targets/blackbox
+        refresh_interval: 60s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: sentinel-snmp
+    metrics_path: /snmp
+    http_sd_configs:
+      - url: http://control-api:8080/api/v1/targets/snmp
+        refresh_interval: 60s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [snmp_module]
+        target_label: __param_module
+      - source_labels: [snmp_auth]
+        target_label: __param_auth
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116

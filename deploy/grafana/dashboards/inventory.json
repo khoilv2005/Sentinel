@@ -1,0 +1,58 @@
+{
+  "editable": true,
+  "panels": [
+    {
+      "type": "stat", "title": "Inventory Devices", "id": 1,
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "postgres", "uid": "sentinel-postgres"},
+      "targets": [{"format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS value FROM devices;", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "type": "stat", "title": "Up", "id": 2,
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "postgres", "uid": "sentinel-postgres"},
+      "targets": [{"format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS value FROM devices WHERE state='up';", "refId": "A"}]
+    },
+    {
+      "type": "stat", "title": "Agent Managed", "id": 3,
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "postgres", "uid": "sentinel-postgres"},
+      "targets": [{"format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS value FROM devices WHERE agent_enabled=true;", "refId": "A"}]
+    },
+    {
+      "type": "stat", "title": "SNMP Managed", "id": 4,
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "postgres", "uid": "sentinel-postgres"},
+      "targets": [{"format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS value FROM devices WHERE snmp_enabled=true;", "refId": "A"}]
+    },
+    {
+      "type": "table", "title": "Device Inventory", "id": 5,
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 4},
+      "datasource": {"type": "postgres", "uid": "sentinel-postgres"},
+      "targets": [{
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT hostname, ip_address, mac_address, device_class, state, site, latency_ms, agent_enabled, snmp_enabled, last_seen FROM devices ORDER BY hostname NULLS LAST, ip_address;",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "table", "title": "Recent Discovery Events", "id": 6,
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
+      "datasource": {"type": "postgres", "uid": "sentinel-postgres"},
+      "targets": [{
+        "format": "table", "rawQuery": true,
+        "rawSql": "SELECT created_at AS time, severity, event_type, message FROM events ORDER BY created_at DESC LIMIT 100;",
+        "refId": "A"
+      }]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["sentinelview", "inventory"],
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "SentinelView - Device Inventory",
+  "uid": "sentinel-inventory",
+  "version": 1
+}

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0b1118" />
+  <title>SentinelView</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="toast-root" class="toast-root"></div>
+
+  <section id="login-screen" class="login-screen hidden" aria-label="Sign in">
+    <div class="login-card">
+      <div class="brand login-brand">
+        <div class="brand-mark">SV</div>
+        <div><div class="brand-name">SentinelView</div><div class="brand-sub">Infrastructure monitoring platform</div></div>
+      </div>
+      <div class="login-copy">
+        <h1>Sign in to SentinelView</h1>
+        <p>Manage hosts, services, problems, discovery, agents, rules and availability from one interface.</p>
+      </div>
+      <form id="login-form" class="form-stack">
+        <label>Username<input id="login-username" autocomplete="username" value="admin" required /></label>
+        <label>Password<input id="login-password" type="password" autocomplete="current-password" required /></label>
+        <button class="button primary full" type="submit">Sign in</button>
+      </form>
+      <p id="login-error" class="form-error"></p>
+      <div class="login-hint">Default development credentials are configured by <code>SENTINEL_ADMIN_USER</code> and <code>SENTINEL_ADMIN_PASSWORD</code>.</div>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand sidebar-brand">
+        <div class="brand-mark">SV</div>
+        <div class="brand-copy"><div class="brand-name">SentinelView</div><div class="brand-sub">Operations Console</div></div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <div class="nav-section">
+          <div class="nav-label">Monitor</div>
+          <a href="#overview" class="nav-item" data-route="overview"><span class="nav-icon">⌂</span><span>Overview</span></a>
+          <a href="#hosts" class="nav-item" data-route="hosts"><span class="nav-icon">▣</span><span>Hosts</span></a>
+          <a href="#services" class="nav-item" data-route="services"><span class="nav-icon">≡</span><span>Services</span></a>
+          <a href="#problems" class="nav-item" data-route="problems"><span class="nav-icon">!</span><span>Problems</span><span id="nav-problem-count" class="nav-count hidden">0</span></a>
+          <a href="#events" class="nav-item" data-route="events"><span class="nav-icon">◷</span><span>Events</span></a>
+          <a href="#topology" class="nav-item" data-route="topology"><span class="nav-icon">◇</span><span>Topology</span></a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-label">Manage</div>
+          <a href="#discovery" class="nav-item" data-route="discovery"><span class="nav-icon">⌁</span><span>Discovery</span></a>
+          <a href="#devices" class="nav-item" data-route="devices"><span class="nav-icon">▤</span><span>Inventory</span></a>
+          <a href="#agents" class="nav-item" data-route="agents"><span class="nav-icon">◎</span><span>Agents</span></a>
+          <a href="#policies" class="nav-item" data-route="policies"><span class="nav-icon">☷</span><span>Agent Policies</span></a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-label">Configure</div>
+          <a href="#rules" class="nav-item" data-route="rules"><span class="nav-icon">⟐</span><span>Monitoring Rules</span></a>
+          <a href="#snmp" class="nav-item" data-route="snmp"><span class="nav-icon">⌘</span><span>SNMP</span></a>
+          <a href="#integrations" class="nav-item" data-route="integrations"><span class="nav-icon">⊞</span><span>Integrations</span></a>
+          <a href="#notifications" class="nav-item" data-route="notifications"><span class="nav-icon">✉</span><span>Notifications</span></a>
+          <a href="#maintenance" class="nav-item" data-route="maintenance"><span class="nav-icon">◴</span><span>Maintenance</span></a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-label">Report</div>
+          <a href="#availability" class="nav-item" data-route="availability"><span class="nav-icon">◫</span><span>Availability & SLA</span></a>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-label">Platform</div>
+          <a href="#users" class="nav-item admin-only" data-route="users"><span class="nav-icon">♙</span><span>Users & Roles</span></a>
+          <a href="#audit" class="nav-item" data-route="audit"><span class="nav-icon">⌕</span><span>Audit Log</span></a>
+          <a href="#settings" class="nav-item" data-route="settings"><span class="nav-icon">⚙</span><span>Settings</span></a>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="service-pill"><span id="api-dot" class="status-dot unknown"></span><span id="api-label">API checking</span></div>
+        <div class="user-chip"><div id="user-avatar" class="avatar">A</div><div class="user-chip-copy"><strong id="user-name">admin</strong><span id="user-role">admin</span></div><button id="logout-btn" class="icon-button" title="Sign out">↪</button></div>
+        <div class="version">SentinelView <strong>v0.3.0</strong></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="mobile-menu" class="icon-button mobile-menu" title="Menu">☰</button>
+        <div class="page-heading"><h1 id="page-title">Overview</h1><p id="page-subtitle">Infrastructure health at a glance</p></div>
+        <div class="global-search-wrap">
+          <input id="global-search" class="global-search" placeholder="Search hosts and events..." autocomplete="off" />
+          <kbd>Ctrl K</kbd>
+          <div id="search-results" class="search-results hidden"></div>
+        </div>
+        <div class="topbar-actions">
+          <button id="refresh-btn" class="button ghost">Refresh</button>
+          <button id="quick-add-btn" class="button primary">+ Quick action</button>
+        </div>
+      </header>
+
+      <div id="breadcrumb" class="breadcrumb"></div>
+      <section id="page-content" class="page-content" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <dialog id="modal" class="modal">
+    <form method="dialog" class="modal-shell">
+      <div class="modal-head"><div><h2 id="modal-title"></h2><p id="modal-subtitle"></p></div><button value="cancel" class="icon-button" aria-label="Close">×</button></div>
+      <div id="modal-body" class="modal-body"></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
