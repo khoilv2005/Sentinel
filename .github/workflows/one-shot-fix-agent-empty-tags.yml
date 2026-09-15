@@ -51,9 +51,8 @@ jobs:
           text = text.replace(old_install, new_install, 1)
           path.write_text(text, encoding='utf-8')
 
-          # Regression assertions: empty Tags must never be forwarded as a dangling parameter.
           patched = path.read_text(encoding='utf-8')
-          assert "'-Tags',('\"'+$Tags+'\"'))" in patched
+          assert 'IsNullOrWhiteSpace($Tags)' in patched
           assert "$installArgs += @('--tags', $Tags)" in patched
           assert "& $tmp install --server $Server --token $Token --site $Site --tags $Tags" not in patched
 
