@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — audit hardening
+
+### Agentless validation
+
+- Added disposable real-target integration coverage for WinRM/CIM on Windows, OpenSSH on Linux and a local SNMP daemon.
+- Added scheduler regression coverage for three consecutive collection failures followed by successful recovery.
+- Added a safe SQLite-backed entire-`/24` assignment regression that proves 254 unique monitor assignments and idempotent re-application.
+- Added a hosted no-cache Docker application build so local Docker DNS availability is not the only build-validation path.
+- Continued Go 1.25 managed-agent verification and Linux/Windows cross-builds in CI, so host-installed Go is not required for runtime deployment.
+
+### Notifications and maintenance
+
+- Added a persistent notification delivery queue and `notification-worker`.
+- Added webhook, Slack, Microsoft Teams, Telegram and SMTP delivery with bounded retry/backoff.
+- Added test delivery and recent-delivery status APIs/UI.
+- Added encryption at rest and API redaction for notification channel delivery configuration.
+- Added automatic problem opened/escalated/recovered/post-maintenance notification transitions.
+- Added active maintenance suppression for matching problem notifications.
+- Added maintenance-aware SLA accounting that removes excluded intervals from the eligible denominator.
+
+### Audit fixes and operations
+
+- Fixed bootstrap instability when multiple monitoring rules legitimately use the same metric by identifying seeded defaults by rule name.
+- Fixed stale bearer-session authorization so disabled users are rejected immediately and role changes apply to already-issued sessions.
+- Added consistent `.env.example` PostgreSQL credentials for clean first boot.
+- Added explicit Grafana persistent-admin password rotation helper instead of silently resetting existing state.
+- Added agentless-worker problem synchronization after poll success/failure transitions.
+- Updated README, UI guide, operations guide, project status and roadmap to reflect implemented behavior.
+
 ## 0.3.0
 
 ### First-party operations UI
