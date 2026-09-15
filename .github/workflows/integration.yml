@@ -1,0 +1,96 @@
+name: integration
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  docker-clean-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose
+        run: docker compose config >/tmp/sentinel-compose.yml
+      - name: Fresh no-cache application build
+        run: docker compose build --no-cache control-api web-ui
+
+  agentless-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install SSH and SNMP test targets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y openssh-server snmp snmpd
+          if ! id sentinelqa >/dev/null 2>&1; then
+            sudo useradd -m -s /bin/bash sentinelqa
+          fi
+          echo 'sentinelqa:SentinelQa-Only-123!' | sudo chpasswd
+          sudo mkdir -p /run/sshd /etc/ssh/sshd_config.d
+          printf 'PasswordAuthentication yes\nPermitRootLogin no\n' | sudo tee /etc/ssh/sshd_config.d/99-sentinel-qa.conf
+          sudo /usr/sbin/sshd -p 2222
+          cat >/tmp/sentinel-snmpd.conf <<'EOF'
+          agentaddress udp:127.0.0.1:161
+          rocommunity sentinelqa 127.0.0.1
+          sysLocation SentinelView-CI
+          sysContact qa@sentinel.invalid
+          EOF
+          sudo pkill snmpd || true
+          sudo snmpd -f -Lo -C -c /tmp/sentinel-snmpd.conf >/tmp/snmpd.log 2>&1 &
+          sleep 2
+          ssh-keyscan -p 2222 127.0.0.1 || true
+          snmpget -v2c -c sentinelqa 127.0.0.1 1.3.6.1.2.1.1.5.0
+      - name: Install backend dependencies
+        run: pip install -r services/control-api/requirements.txt
+      - name: Real SSH SNMP and scheduler recovery integration
+        env:
+          PYTHONPATH: services/control-api
+          SENTINEL_DB_URL: sqlite:////tmp/sentinel-agentless-integration.db
+          SENTINEL_CREDENTIAL_SECRET: ci-agentless-integration-secret
+          SENTINEL_QA_SSH_USER: sentinelqa
+          SENTINEL_QA_SSH_PASSWORD: SentinelQa-Only-123!
+          SENTINEL_QA_SSH_PORT: '2222'
+          SENTINEL_QA_SNMP_COMMUNITY: sentinelqa
+        run: python qa/integration/agentless_linux.py
+
+  agentless-winrm:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure disposable WinRM target
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Enable-PSRemoting -SkipNetworkProfileCheck -Force
+          Set-Service WinRM -StartupType Automatic
+          Start-Service WinRM
+          $password = ConvertTo-SecureString 'SentinelQa-Only-123!' -AsPlainText -Force
+          if (-not (Get-LocalUser -Name sentinelqa -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name sentinelqa -Password $password -PasswordNeverExpires -AccountNeverExpires
+          } else {
+            Set-LocalUser -Name sentinelqa -Password $password
+          }
+          Add-LocalGroupMember -Group Administrators -Member sentinelqa -ErrorAction SilentlyContinue
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name LocalAccountTokenFilterPolicy -PropertyType DWord -Value 1 -Force | Out-Null
+          winrm enumerate winrm/config/listener
+      - name: Install backend dependencies
+        run: pip install -r services/control-api/requirements.txt
+      - name: Real WinRM CIM integration
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = 'services/control-api'
+          $env:SENTINEL_QA_WINRM_USER = 'sentinelqa'
+          $env:SENTINEL_QA_WINRM_PASSWORD = 'SentinelQa-Only-123!'
+          $env:SENTINEL_QA_WINRM_DOMAIN = $env:COMPUTERNAME
+          python qa/integration/agentless_winrm.py
