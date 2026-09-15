@@ -79,7 +79,9 @@ def services_for_device(db: Session, device: Device) -> list[dict]:
         "updated_at": device.last_seen,
     })
 
-    if device.agent_enabled:
+    # A Sentinel Agent service exists only after a real managed-agent enrollment.
+    # Legacy/stale Device.agent_enabled flags must never create a fake agent.
+    if agent is not None:
         online = is_agent_online(agent)
         state, threshold = state_from_rule(1.0 if online else 0.0, rules.get("sentinel_agent_up"))
         if not online and state == "ok":
@@ -92,8 +94,8 @@ def services_for_device(db: Session, device: Device) -> list[dict]:
             "state": state,
             "value": "online" if online else "offline",
             "unit": None,
-            "message": f"Agent {agent.version if agent else 'not enrolled'} is {'online' if online else 'offline'}",
-            "updated_at": agent.last_checkin if agent else device.agent_last_seen,
+            "message": f"Agent {agent.version} is {'online' if online else 'offline'}",
+            "updated_at": agent.last_checkin,
         })
 
     if telemetry:

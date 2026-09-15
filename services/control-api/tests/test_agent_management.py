@@ -143,3 +143,51 @@ def test_reenrollment_rotates_credential_without_duplicate_device_agent():
         json={"hostname": "reinstall-win", "version": "0.3.0"},
     )
     assert old_checkin.status_code == 401
+
+
+
+def test_legacy_agent_flag_does_not_create_fake_managed_agent():
+    created = client.post(
+        "/api/v1/devices",
+        headers=ADMIN,
+        json={"ip_address": "192.0.2.250", "hostname": "fake-container-qa", "device_class": "server"},
+    )
+    if created.status_code == 409:
+        rows = client.get("/api/v1/devices?q=fake-container-qa", headers=ADMIN).json()
+        device_id = next(row["id"] for row in rows if row["hostname"] == "fake-container-qa")
+    else:
+        assert created.status_code == 200, created.text
+        device_id = created.json()["id"]
+
+    legacy = client.post(
+        "/api/v1/agents/register",
+        headers=ADMIN,
+        json={
+            "device_id": device_id,
+            "hostname": "fake-container-qa",
+            "advertise_address": "fake-container-qa:9123",
+            "os_name": "linux",
+            "arch": "amd64",
+            "version": "0.2.2",
+            "site": "qa",
+            "tags": ["legacy"],
+        },
+    )
+    assert legacy.status_code == 200, legacy.text
+
+    hosts = client.get("/api/v1/hosts?q=fake-container-qa", headers=ADMIN)
+    assert hosts.status_code == 200, hosts.text
+    host = next(row for row in hosts.json() if row["id"] == device_id)
+    assert host["agent_enabled"] is False
+    assert host["agent_online"] is False
+
+    services = client.get(f"/api/v1/services?host_id={device_id}", headers=ADMIN)
+    assert services.status_code == 200, services.text
+    assert not any(row["service_key"] == "agent:health" for row in services.json())
+
+    problems = client.get(f"/api/v1/problems?device_id={device_id}", headers=ADMIN)
+    assert problems.status_code == 200, problems.text
+    assert not any(row["service_key"] == "agent:health" for row in problems.json())
+
+    deleted = client.delete(f"/api/v1/devices/{device_id}", headers=ADMIN)
+    assert deleted.status_code == 200, deleted.text

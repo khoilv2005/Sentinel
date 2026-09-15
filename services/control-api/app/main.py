@@ -813,7 +813,8 @@ def _host_summary(db: Session, device: Device, problems: list[Problem] | None = 
     return HostSummaryOut(
         id=device.id, hostname=device.hostname, ip_address=device.ip_address, state=device.state,
         device_class=device.device_class, os_name=device.os_name, site=device.site,
-        agent_enabled=device.agent_enabled, agent_online=is_agent_online(agent), agent_version=device.agent_version,
+        agent_enabled=bool(agent and not agent.revoked), agent_online=is_agent_online(agent),
+        agent_version=(agent.version if agent else None),
         problem_count=len(problems), critical_count=sum(1 for p in problems if p.severity == "critical"),
         warning_count=sum(1 for p in problems if p.severity == "warning"), service_count=len(services),
         last_seen=device.last_seen,
