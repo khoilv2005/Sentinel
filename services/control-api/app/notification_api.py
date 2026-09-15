@@ -5,8 +5,9 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import NotificationChannel, NotificationDelivery
+from .models import NotificationChannel
 from .notification_engine import enqueue_test_delivery, process_delivery
+from .notification_models import NotificationDelivery
 from .security import control_identity, require_write
 
 
