@@ -5,6 +5,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from .db import get_db
+from .maintenance_api import router as maintenance_router
 from .models import AuditEvent, NotificationChannel
 from .notification_engine import (
     enqueue_test_delivery,
@@ -149,3 +150,6 @@ def test_notification_channel(
     db.refresh(delivery)
     process_delivery(db, delivery)
     return delivery_out(delivery)
+
+
+router.include_router(maintenance_router)
