@@ -1,0 +1,75 @@
+name: one-shot-fix-agent-empty-tags
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-fix-agent-empty-tags.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Patch Windows installer empty-tags handling
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('services/control-api/app/main.py')
+          text = path.read_text(encoding='utf-8')
+
+          old_elevate = '''  $elevateArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'),'-Server',('"'+$Server+'"'),'-Token',('"'+$Token+'"'),'-Site',('"'+$Site+'"'),'-Tags',('"'+$Tags+'"'))'''
+          new_elevate = '''  $elevateArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'),'-Server',('"'+$Server+'"'),'-Token',('"'+$Token+'"'),'-Site',('"'+$Site+'"'))
+          if (-not [string]::IsNullOrWhiteSpace($Tags)) {
+            $elevateArgs += @('-Tags', ('"'+$Tags+'"'))
+          }'''
+
+          old_install = '''& $tmp install --server $Server --token $Token --site $Site --tags $Tags'''
+          new_install = '''$installArgs = @('install','--server',$Server,'--token',$Token,'--site',$Site)
+          if (-not [string]::IsNullOrWhiteSpace($Tags)) {
+            $installArgs += @('--tags', $Tags)
+          }
+          & $tmp @installArgs'''
+
+          if old_elevate not in text:
+              raise SystemExit('Expected UAC argument line was not found; refusing to patch an unexpected file.')
+          if old_install not in text:
+              raise SystemExit('Expected agent install line was not found; refusing to patch an unexpected file.')
+
+          text = text.replace(old_elevate, new_elevate, 1)
+          text = text.replace(old_install, new_install, 1)
+          path.write_text(text, encoding='utf-8')
+
+          # Regression assertions: empty Tags must never be forwarded as a dangling parameter.
+          patched = path.read_text(encoding='utf-8')
+          assert "'-Tags',('\"'+$Tags+'\"'))" in patched
+          assert "$installArgs += @('--tags', $Tags)" in patched
+          assert "& $tmp install --server $Server --token $Token --site $Site --tags $Tags" not in patched
+
+      - name: Compile Python
+        run: python -m py_compile services/control-api/app/main.py
+
+      - name: Run control API tests
+        run: |
+          pip install -r services/control-api/requirements.txt
+          PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-fix-ci.db pytest -q services/control-api/tests
+
+      - name: Remove one-shot workflow and commit fix to main
+        run: |
+          rm .github/workflows/one-shot-fix-agent-empty-tags.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/control-api/app/main.py .github/workflows/one-shot-fix-agent-empty-tags.yml
+          git commit -m 'fix(agent): handle empty Windows installer tags'
+          git push origin HEAD:main
