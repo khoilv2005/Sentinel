@@ -5,13 +5,43 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import NotificationChannel
-from .notification_engine import enqueue_test_delivery, process_delivery
+from .models import AuditEvent, NotificationChannel
+from .notification_engine import (
+    enqueue_test_delivery,
+    process_delivery,
+    redact_config,
+    validate_channel_config,
+)
 from .notification_models import NotificationDelivery
 from .security import control_identity, require_write
 
 
-router = APIRouter(prefix="/api/v1", tags=["notifications"])
+# This router is included under the existing /api/v1 agentless router so new
+# notification endpoints can be added without changing the monolithic main.py.
+router = APIRouter(tags=["notifications"])
+
+
+def _audit(db: Session, actor: str, action: str, object_type: str, object_id: str | None, message: str, details: dict | None = None):
+    db.add(AuditEvent(
+        actor=actor,
+        action=action,
+        object_type=object_type,
+        object_id=object_id,
+        message=message,
+        details=details or {},
+    ))
+
+
+def channel_out(row: NotificationChannel) -> dict:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "channel_type": row.channel_type,
+        "enabled": row.enabled,
+        "config": redact_config(row.config or {}),
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
 
 
 def delivery_out(row: NotificationDelivery) -> dict:
@@ -30,6 +60,64 @@ def delivery_out(row: NotificationDelivery) -> dict:
         "updated_at": row.updated_at,
         "sent_at": row.sent_at,
     }
+
+
+@router.get("/notification-channels")
+def list_notification_channels(
+    identity: dict = Depends(control_identity),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(select(NotificationChannel).order_by(NotificationChannel.name)).scalars()
+    return [channel_out(row) for row in rows]
+
+
+@router.post("/notification-channels")
+def create_notification_channel(
+    payload: dict,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
+    name = str(payload.get("name") or "").strip()
+    channel_type = str(payload.get("channel_type") or "webhook").strip()
+    enabled = bool(payload.get("enabled", True))
+    config = payload.get("config") or {}
+    if not name or len(name) > 160:
+        raise HTTPException(400, "notification channel name is required and must be at most 160 characters")
+    if channel_type not in {"webhook", "email", "slack", "teams", "telegram"}:
+        raise HTTPException(400, "unsupported notification channel type")
+    if not isinstance(config, dict):
+        raise HTTPException(400, "notification channel config must be an object")
+    if db.execute(select(NotificationChannel).where(NotificationChannel.name == name)).scalar_one_or_none():
+        raise HTTPException(409, "notification channel name already exists")
+    try:
+        validate_channel_config(channel_type, config)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    row = NotificationChannel(name=name, channel_type=channel_type, enabled=enabled, config=config)
+    db.add(row)
+    db.flush()
+    _audit(db, identity["username"], "create", "notification_channel", row.id, f"Created channel {row.name}", {"type": row.channel_type})
+    db.commit()
+    db.refresh(row)
+    return channel_out(row)
+
+
+@router.delete("/notification-channels/{channel_id}")
+def delete_notification_channel(
+    channel_id: str,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
+    row = db.get(NotificationChannel, channel_id)
+    if row is None:
+        raise HTTPException(404, "notification channel not found")
+    name = row.name
+    for delivery in db.execute(select(NotificationDelivery).where(NotificationDelivery.channel_id == channel_id)).scalars():
+        db.delete(delivery)
+    db.delete(row)
+    _audit(db, identity["username"], "delete", "notification_channel", channel_id, f"Deleted channel {name}")
+    db.commit()
+    return {"deleted": channel_id}
 
 
 @router.get("/notification-deliveries")
