@@ -26,13 +26,16 @@ jobs:
       - name: Install SSH and SNMP test targets
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          QA_PASSWORD="$(python -c 'import secrets; print("Q9!" + secrets.token_urlsafe(18))')"
+          echo "::add-mask::$QA_PASSWORD"
+          echo "SENTINEL_QA_SSH_PASSWORD=$QA_PASSWORD" >> "$GITHUB_ENV"
           sudo apt-get update
           sudo apt-get install -y openssh-server snmp snmpd
           if ! id sentinelqa >/dev/null 2>&1; then
             sudo useradd -m -s /bin/bash sentinelqa
           fi
-          echo 'sentinelqa:SentinelQa-Only-123!' | sudo chpasswd
+          printf 'sentinelqa:%s\n' "$QA_PASSWORD" | sudo chpasswd
           sudo mkdir -p /run/sshd /etc/ssh/sshd_config.d
           printf 'PasswordAuthentication yes\nPermitRootLogin no\n' | sudo tee /etc/ssh/sshd_config.d/99-sentinel-qa.conf
           sudo /usr/sbin/sshd -p 2222
@@ -55,7 +58,6 @@ jobs:
           SENTINEL_DB_URL: sqlite:////tmp/sentinel-agentless-integration.db
           SENTINEL_CREDENTIAL_SECRET: ci-agentless-integration-secret
           SENTINEL_QA_SSH_USER: sentinelqa
-          SENTINEL_QA_SSH_PASSWORD: SentinelQa-Only-123!
           SENTINEL_QA_SSH_PORT: '2222'
           SENTINEL_QA_SNMP_COMMUNITY: sentinelqa
         run: python qa/integration/agentless_linux.py
@@ -72,10 +74,13 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          $passwordText = 'Q9!' + [Guid]::NewGuid().ToString('N')
+          Write-Output "::add-mask::$passwordText"
+          Add-Content -Path $env:GITHUB_ENV -Value "SENTINEL_QA_WINRM_PASSWORD=$passwordText"
           Enable-PSRemoting -SkipNetworkProfileCheck -Force
           Set-Service WinRM -StartupType Automatic
           Start-Service WinRM
-          $password = ConvertTo-SecureString 'SentinelQa-Only-123!' -AsPlainText -Force
+          $password = ConvertTo-SecureString $passwordText -AsPlainText -Force
           if (-not (Get-LocalUser -Name sentinelqa -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name sentinelqa -Password $password -PasswordNeverExpires -AccountNeverExpires
           } else {
@@ -91,6 +96,5 @@ jobs:
         run: |
           $env:PYTHONPATH = 'services/control-api'
           $env:SENTINEL_QA_WINRM_USER = 'sentinelqa'
-          $env:SENTINEL_QA_WINRM_PASSWORD = 'SentinelQa-Only-123!'
           $env:SENTINEL_QA_WINRM_DOMAIN = $env:COMPUTERNAME
           python qa/integration/agentless_winrm.py
