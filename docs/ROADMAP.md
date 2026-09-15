@@ -3,17 +3,22 @@
 ## v0.3.0 — First-party Operations UI (implemented)
 
 - first-party monitoring console;
-- local UI login and basic roles;
+- local UI login and basic roles with live disable/role enforcement;
 - overview/hosts/host detail/services/problems/events;
 - problem acknowledgement;
 - discovery/inventory;
 - managed agent onboarding and policies;
+- agentless WinRM/SSH/SNMP monitoring;
+- encrypted agentless credentials;
+- selected/discovered/entire-CIDR agentless assignment;
 - monitoring rule UI;
 - SNMP target UI;
 - topology visualization;
 - integration catalog;
-- maintenance metadata;
-- notification channel configuration foundation;
+- explicit maintenance windows with problem-notification suppression;
+- SLA maintenance exclusions;
+- webhook/Slack/Teams/Telegram/SMTP notification delivery worker;
+- persistent notification delivery state, test delivery and bounded retries;
 - availability/SLA UI;
 - audit log;
 - global search;
@@ -21,11 +26,12 @@
 
 ## v0.3.1 — Monitoring behavior
 
+- formal schema migrations (Alembic or equivalent);
 - rule inheritance: global -> site -> group -> host -> service;
 - more accurate duration-based problem evaluation;
-- recurring maintenance schedules;
-- notification routing/dispatch;
-- encrypted SNMP/application credentials;
+- recurring maintenance recurrence rules beyond explicit start/end windows;
+- enterprise notification routing policies, calendars, ownership and multi-stage escalation;
+- dedicated SNMP/application credential UX and rotation workflows;
 - service acknowledgement comments and ownership;
 - better host/service grouping and saved views.
 
@@ -44,7 +50,7 @@
 
 - OIDC/LDAP/SAML;
 - granular RBAC and per-site scope;
-- refined SLA/availability accounting;
+- refined reporting and long-term SLA workflows;
 - PDF/CSV scheduled reports;
 - signed release artifacts;
 - agent update inventory and manual central update.

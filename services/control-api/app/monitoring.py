@@ -7,7 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .maintenance_engine import notifications_suppressed
 from .models import AgentlessMonitor, AgentlessTelemetryLatest, AgentTelemetryLatest, AlertRule, Device, ManagedAgent, Problem
+from .notification_engine import enqueue_problem_transition
 
 
 def utcnow() -> datetime:
@@ -52,10 +54,15 @@ def state_from_rule(value: float | None, rule: AlertRule | None) -> tuple[str, f
 
 
 def _rule_map(db: Session) -> dict[str, AlertRule]:
-    return {
-        rule.metric: rule
-        for rule in db.execute(select(AlertRule).where(AlertRule.enabled.is_(True))).scalars()
-    }
+    # Newer rules intentionally override older rules for the same metric. This
+    # also makes duplicate-metric rules deterministic rather than depending on
+    # database iteration order.
+    rules = list(db.execute(
+        select(AlertRule)
+        .where(AlertRule.enabled.is_(True))
+        .order_by(AlertRule.created_at, AlertRule.id)
+    ).scalars())
+    return {rule.metric: rule for rule in rules}
 
 
 def latest_telemetry_for_device(db: Session, device: Device):
@@ -190,11 +197,14 @@ def all_services(db: Session) -> list[dict]:
 def sync_problems(db: Session) -> list[Problem]:
     active_keys: set[tuple[str, str]] = set()
     now = utcnow()
+    rules = _rule_map(db)
+
     for device in db.execute(select(Device)).scalars():
-        rules = _rule_map(db)
+        suppressed = notifications_suppressed(db, device, now)
         for service in services_for_device(db, device):
             if service["state"] not in {"warning", "critical"}:
                 continue
+
             key = (device.id, service["service_key"])
             active_keys.add(key)
             problem = db.execute(
@@ -204,23 +214,29 @@ def sync_problems(db: Session) -> list[Problem]:
                     Problem.state != "resolved",
                 )
             ).scalar_one_or_none()
+
             metric = None
-            if service["service_key"] == "metric:cpu": metric = "sentinel_cpu_usage_percent"
-            elif service["service_key"] == "metric:memory": metric = "sentinel_memory_usage_percent"
-            elif service["service_key"].startswith("disk:"): metric = "sentinel_disk_usage_percent"
-            elif service["service_key"] == "agent:health": metric = "sentinel_agent_up"
+            if service["service_key"] == "metric:cpu":
+                metric = "sentinel_cpu_usage_percent"
+            elif service["service_key"] == "metric:memory":
+                metric = "sentinel_memory_usage_percent"
+            elif service["service_key"].startswith("disk:"):
+                metric = "sentinel_disk_usage_percent"
+            elif service["service_key"] == "agent:health":
+                metric = "sentinel_agent_up"
             rule = rules.get(metric) if metric else None
             value = service.get("value") if isinstance(service.get("value"), (int, float)) else None
             threshold = None
             if rule:
                 threshold = rule.critical_threshold if service["state"] == "critical" else rule.warning_threshold
+
             if problem is None:
                 problem = Problem(
                     device_id=device.id,
                     service_key=service["service_key"],
                     service_name=service["service_name"],
                     severity=service["state"],
-                    state="open",
+                    state="suppressed" if suppressed else "open",
                     title=f"{service['service_name']} is {service['state']}",
                     message=service["message"],
                     current_value=float(value) if value is not None else None,
@@ -229,18 +245,37 @@ def sync_problems(db: Session) -> list[Problem]:
                     updated_at=now,
                 )
                 db.add(problem)
-            else:
-                problem.severity = service["state"]
-                problem.title = f"{service['service_name']} is {service['state']}"
-                problem.message = service["message"]
-                problem.current_value = float(value) if value is not None else None
-                problem.threshold = threshold
-                problem.updated_at = now
+                db.flush()
+                enqueue_problem_transition(db, problem, device, "opened", now=now)
+                continue
+
+            previous_state = problem.state
+            previous_severity = problem.severity
+            problem.severity = service["state"]
+            problem.title = f"{service['service_name']} is {service['state']}"
+            problem.message = service["message"]
+            problem.current_value = float(value) if value is not None else None
+            problem.threshold = threshold
+            problem.updated_at = now
+
+            if suppressed:
+                problem.state = "suppressed"
+            elif previous_state == "suppressed":
+                problem.state = "acknowledged" if problem.acknowledged_at else "open"
+                enqueue_problem_transition(db, problem, device, "maintenance-ended", now=now)
+
+            if previous_severity != problem.severity and problem.severity == "critical":
+                enqueue_problem_transition(db, problem, device, "escalated", now=now)
 
     for problem in db.execute(select(Problem).where(Problem.state != "resolved")).scalars():
-        if (problem.device_id, problem.service_key) not in active_keys:
-            problem.state = "resolved"
-            problem.resolved_at = now
-            problem.updated_at = now
+        if (problem.device_id, problem.service_key) in active_keys:
+            continue
+        device = db.get(Device, problem.device_id)
+        problem.state = "resolved"
+        problem.resolved_at = now
+        problem.updated_at = now
+        if device is not None:
+            enqueue_problem_transition(db, problem, device, "resolved", now=now)
+
     db.commit()
     return list(db.execute(select(Problem).order_by(Problem.state, Problem.severity, Problem.opened_at.desc())).scalars())

@@ -45,4 +45,5 @@ jobs:
       - run: node --check services/web-ui/js/api.js
       - run: node --check services/web-ui/js/ui.js
       - run: node --check services/web-ui/js/app.js
+      - run: node --check services/web-ui/js/runtime-enhancements.js
       - run: python scripts/validate-config.py

@@ -84,6 +84,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  notification-worker:
+    image: sentinelview-control-api:0.3.0
+    build:
+      context: .
+      dockerfile: services/control-api/Dockerfile
+    command: ["python", "-m", "app.notification_worker"]
+    environment:
+      SENTINEL_DB_URL: ${SENTINEL_DB_URL:-postgresql+psycopg://sentinel:sentinel@postgres:5432/sentinel}
+      SENTINEL_LOG_LEVEL: ${SENTINEL_LOG_LEVEL:-INFO}
+      SENTINEL_CREDENTIAL_SECRET: ${SENTINEL_CREDENTIAL_SECRET:-change-me-credential-secret}
+      SENTINEL_NOTIFICATION_POLL_SECONDS: ${SENTINEL_NOTIFICATION_POLL_SECONDS:-2}
+      SENTINEL_NOTIFICATION_BATCH_SIZE: ${SENTINEL_NOTIFICATION_BATCH_SIZE:-100}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      control-api:
+        condition: service_healthy
+    restart: unless-stopped
+
   web-ui:
     image: sentinelview-web-ui:0.3.0
     build:

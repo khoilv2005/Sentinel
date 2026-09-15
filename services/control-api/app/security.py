@@ -7,8 +7,12 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from .config import settings
+from .db import get_db
+from .models import LocalUser
 
 
 def hash_token(token: str) -> str:
@@ -87,12 +91,17 @@ def decode_session_token(token: str) -> dict:
 def control_identity(
     x_api_key: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
 ) -> dict:
     if x_api_key and secrets.compare_digest(x_api_key, settings.api_key):
         return {"username": "api-key", "role": "admin", "auth": "api-key"}
     if authorization and authorization.lower().startswith("bearer "):
         payload = decode_session_token(authorization.split(" ", 1)[1].strip())
-        return {"username": payload["sub"], "role": payload.get("role", "viewer"), "auth": "session"}
+        username = str(payload.get("sub") or "")
+        user = db.execute(select(LocalUser).where(LocalUser.username == username)).scalar_one_or_none()
+        if user is None or not user.enabled:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session user is disabled or missing")
+        return {"username": user.username, "role": user.role, "auth": "session"}
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required")
 
 

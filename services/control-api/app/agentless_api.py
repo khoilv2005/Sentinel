@@ -13,6 +13,7 @@ from .agentless_collectors import collect_target
 from .db import get_db
 from .models import AgentlessMonitor, AgentlessTelemetryLatest, AuditEvent, CredentialProfile, Device
 from .netutils import parse_private_network
+from .notification_api import router as notification_router
 from .secretbox import decrypt_secrets, encrypt_secrets
 from .security import control_identity, require_write
 
@@ -293,3 +294,6 @@ def request_poll(monitor_id: str, identity: dict = Depends(require_write), db: S
     row.enabled = True
     db.commit()
     return {"status": "queued", "id": monitor_id}
+
+
+router.include_router(notification_router)

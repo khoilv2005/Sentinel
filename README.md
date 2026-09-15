@@ -1,14 +1,14 @@
 # SentinelView v0.3.0
 
-SentinelView is a self-hosted infrastructure monitoring and observability platform designed around a **first-party operations UI**, outbound managed agents, Prometheus-compatible metrics, PostgreSQL inventory, SNMP/blackbox integrations and Grafana for optional advanced analytics.
+SentinelView is a self-hosted infrastructure monitoring and observability platform designed around a **first-party operations UI**, optional outbound managed agents, agentless WinRM/SSH/SNMP collection, Prometheus-compatible metrics, PostgreSQL inventory, SNMP/blackbox integrations and Grafana for optional advanced analytics.
 
 v0.3.0 changes the product model significantly: **SentinelView UI is now the primary interface**. Operators no longer need Grafana, Prometheus or Swagger for normal monitoring workflows.
 
 > Scope statement: v0.3.0 is a substantial lab/development platform and CV-grade monitoring project. It is not a claim of feature-for-feature parity with the commercial editions of Checkmk, Zabbix, Datadog or Elastic. The repository clearly separates implemented features from roadmap items.
 
-## What v0.3.0 adds
+## What v0.3.0 includes
 
-The first-party UI at `http://localhost:3001` now includes:
+The first-party UI at `http://localhost:3001` includes:
 
 - Overview dashboard with host/service/problem/agent health.
 - Hosts table with state, site, OS, agent status, services and problem counts.
@@ -19,15 +19,18 @@ The first-party UI at `http://localhost:3001` now includes:
 - Network Discovery UI with live scan progress.
 - Infrastructure Inventory.
 - Managed Agent onboarding and one-command Windows/Linux installation.
+- Agentless monitoring with WinRM, SSH and generic SNMP polling.
+- Agentless target selection by selected IPs, discovered hosts or an entire authorized private CIDR.
+- Encrypted credential profiles for agentless monitoring.
 - Agent Policies with central interval/collector changes.
 - Monitoring Rules UI for CPU, memory, disk and agent availability thresholds.
 - Topology visualization.
 - SNMP target management.
 - Integration catalog.
-- Notification channel configuration foundation.
-- Maintenance windows.
+- Notification channels with queued webhook/Slack/Teams/Telegram/SMTP delivery, retry state and test delivery.
+- Maintenance windows that can suppress problem notifications and exclude maintenance time from SLA accounting.
 - Availability and SLA definitions.
-- Local users and roles (`admin`, `operator`, `viewer`).
+- Local users and roles (`admin`, `operator`, `viewer`) with live role/disable enforcement for active sessions.
 - Audit log.
 - Global host/event search.
 - Platform settings and links to advanced Grafana/Prometheus views.
@@ -48,24 +51,18 @@ Grafana remains available, but is intentionally demoted to **advanced analytics*
                            |
                            v
                   Control API :8080
-                    /    |     \
-                   /     |      \
-                  v      v       v
-            PostgreSQL  Prometheus  Agent artifacts
-             inventory    :9090      Windows/Linux
-             config         |
-             events         v
-             problems     Grafana :3000
-             users        advanced analysis
-                 ^
-                 |
-       +---------+----------+
-       |                    |
-       | HTTPS/HTTP         | discovery/SNMP
-       | outbound           |
-       v                    v
- Sentinel Agent        Network devices
- Windows/Linux         Router/Switch/UPS/etc.
+                  /    |      |     \
+                 /     |      |      \
+                v      v      v       v
+          PostgreSQL Prometheus Workers  Agent artifacts
+           inventory    :9090   |       Windows/Linux
+           config         |      |         
+           events         v      +-- discovery
+           problems     Grafana  +-- agentless WinRM/SSH/SNMP
+           users        :3000    +-- notification delivery
+                                      ^
+                                      |
+                              webhook/SMTP/etc.
 ```
 
 ### Control plane
@@ -75,20 +72,47 @@ FastAPI owns:
 - inventory;
 - discovery jobs;
 - managed-agent enrollment and credentials;
+- encrypted agentless credential profiles;
 - latest endpoint telemetry;
 - service-state derivation;
 - problem lifecycle;
 - monitoring rules;
-- maintenance metadata;
-- availability/SLA definitions;
+- maintenance windows and suppression state;
+- availability/SLA definitions and maintenance exclusions;
+- notification channel configuration and delivery queue;
 - local UI sessions and roles;
 - audit events;
 - topology metadata;
 - installation artifacts.
 
+### Collection plane
+
+SentinelView supports two endpoint-monitoring modes:
+
+1. **Agentless** — WinRM for Windows, SSH for Linux/Unix and SNMP for network/infrastructure devices. This is suitable for basic CPU/RAM/disk/uptime/process/network monitoring without installing the Sentinel agent.
+2. **Managed Agent** — optional enhanced outbound telemetry for endpoints that need a dedicated agent lifecycle and centrally managed policy.
+
+The `agentless-worker` executes scheduled polls and automatically feeds host state, service/problem state and Prometheus-compatible metrics. Managed agents send telemetry outbound to the Control API.
+
 ### Metrics plane
 
-Prometheus scrapes one central SentinelView `/metrics` endpoint for managed-agent metrics. Managed agents send telemetry outbound to the Control API, so endpoint machines do **not** require inbound Prometheus access.
+Prometheus scrapes the central SentinelView `/metrics` endpoint. Endpoint machines do **not** require inbound Prometheus access in managed-agent mode, and agentless targets are polled by SentinelView rather than scraped directly by Prometheus.
+
+### Notification plane
+
+Problem lifecycle transitions are persisted to `notification_deliveries`. The `notification-worker` sends pending deliveries through enabled channels with bounded retry. Active maintenance can suppress matching deliveries.
+
+Supported channel types:
+
+```text
+webhook
+slack
+teams
+telegram
+email (SMTP)
+```
+
+Channel delivery configuration is encrypted at rest using the SentinelView credential encryption key; API responses redact sensitive fields.
 
 ### Visualization
 
@@ -105,7 +129,7 @@ Recommended development/lab host:
 - 8 GB RAM minimum; 16 GB+ recommended for comfortable use.
 - Internet access on the first build so Docker can download images and Go modules.
 
-You do **not** need Python, Go or Node installed on the host to run the containerized platform.
+You do **not** need Python, Go or Node installed on the host to run the containerized platform. GitHub CI independently builds/tests the Go agent and runs disposable WinRM, SSH and SNMP integration targets.
 
 ---
 
@@ -125,9 +149,13 @@ At minimum, change:
 SENTINEL_API_KEY=
 SENTINEL_ADMIN_PASSWORD=
 SENTINEL_SESSION_SECRET=
+SENTINEL_CREDENTIAL_SECRET=
 POSTGRES_PASSWORD=
+SENTINEL_DB_URL=
 GF_SECURITY_ADMIN_PASSWORD=
 ```
+
+`POSTGRES_PASSWORD` and the password embedded in `SENTINEL_DB_URL` must match. The supplied `.env.example` uses matching placeholder values so a copied template can perform a clean first boot before you replace the placeholders.
 
 Then:
 
@@ -168,6 +196,16 @@ SENTINEL_ADMIN_PASSWORD
 The default development fallback is `admin/admin` when those variables are absent. The provided `.env.example` intentionally asks you to replace the password.
 
 The bootstrap user is created on the **first database start**. Changing the environment variable later does not silently overwrite an existing user's password; change it from the Users page or recreate the lab database.
+
+### Grafana password on an existing volume
+
+Grafana persists its admin credential in `grafana-data`. Changing `GF_SECURITY_ADMIN_PASSWORD` after Grafana has already initialized does not rotate that stored credential. To explicitly rotate it on Windows:
+
+```powershell
+.\scripts\reset-grafana-admin.ps1 -Password 'your-new-password'
+```
+
+Do not delete the Grafana volume merely to apply a password change unless its stored state is disposable.
 
 ---
 
@@ -212,9 +250,36 @@ Monitor -> Hosts
 
 Click a discovered device to open Host Detail.
 
-Discovery-only devices provide reachability/inventory data. CPU, RAM, disks and process metrics require a managed endpoint agent or another integration.
+Discovery itself provides reachability and inventory. Performance telemetry can then come from either an agentless integration or the optional managed agent.
 
-### 4. Install a Windows/Linux agent
+### 4. Enable agentless monitoring
+
+Open:
+
+```text
+Configure -> Credentials
+Manage -> Agentless
+```
+
+Create the appropriate credential profile and choose one of:
+
+```text
+WinRM  -> Windows
+SSH    -> Linux/Unix
+SNMP   -> network/infrastructure devices
+```
+
+Agentless scope can be:
+
+```text
+Selected IPs
+Discovered hosts in CIDR
+Entire private CIDR
+```
+
+For a `/24`, SentinelView can enumerate 254 usable addresses. Only monitor ranges and endpoints you are authorized to access.
+
+### 5. Optional: install a Windows/Linux agent
 
 Open:
 
@@ -244,15 +309,15 @@ The bootstrap installer:
 
 No manual inbound port 9123 rule is required for managed-agent mode.
 
-### 5. Observe metrics
+### 6. Observe metrics
 
-After a few telemetry intervals:
+After collection intervals:
 
 ```text
 Hosts -> <host>
 ```
 
-will display:
+can display:
 
 - CPU utilization;
 - memory utilization;
@@ -279,6 +344,7 @@ will display:
 ```text
 Host availability
 Sentinel Agent
+WINRM/SSH/SNMP monitoring
 CPU utilization
 Memory utilization
 Disk C:\
@@ -286,7 +352,7 @@ Process count
 Interface Ethernet
 ```
 
-`Problems` stores current warning/critical conditions. Operators can acknowledge active problems.
+`Problems` stores current warning/critical conditions. Operators can acknowledge active problems. A matching active maintenance window can place a problem into a suppressed state while the underlying condition remains active.
 
 `Events` records discovery, enrollment and state-change events.
 
@@ -298,11 +364,15 @@ Interface Ethernet
 
 `Inventory` shows IP, MAC, vendor/model, class, site, agent and SNMP state.
 
-`Agents` implements Fleet-style enrollment.
+`Agents` implements Fleet-style managed-agent enrollment.
 
-`Agent Policies` centrally control telemetry/check-in intervals and collectors.
+`Agentless` configures WinRM/SSH/SNMP monitoring for selected addresses, discovered hosts or an entire private CIDR.
+
+`Agent Policies` centrally control managed-agent telemetry/check-in intervals and collectors.
 
 ### Configure
+
+`Credentials` stores encrypted WinRM, SSH and SNMP credential profiles. API responses never return their plaintext secrets.
 
 `Monitoring Rules` control service thresholds used by the first-party UI problem engine.
 
@@ -315,17 +385,19 @@ Disk utilization      warning 85% / critical 95%
 Managed agent         critical when unavailable
 ```
 
+Multiple rules may intentionally use the same metric; bootstrap defaults are identified by rule name so duplicate metric rules do not break startup.
+
 `SNMP` manages Prometheus/snmp_exporter targets.
 
 `Integrations` shows implemented and planned integration packs.
 
-`Notifications` stores notification-channel configurations. Automatic notification dispatch/routing is explicitly a later phase; v0.3.0 does not pretend that saved channels are already sending production alerts.
+`Notifications` manages webhook, Slack, Teams, Telegram and SMTP channels. Problem open/escalation/recovery transitions are queued automatically; operators can test a channel and inspect recent delivery status. Failed deliveries retry with bounded exponential backoff.
 
-`Maintenance` stores maintenance-window and SLA-exclusion metadata.
+`Maintenance` creates global, site or host windows. A window can suppress problem notifications and/or exclude its interval from SLA availability accounting.
 
 ### Report
 
-`Availability & SLA` calculates availability using state-change events. Historical accuracy begins from v0.3.0 state-transition recording onward; old databases do not magically gain pre-upgrade history.
+`Availability & SLA` calculates availability using state-change events and removes maintenance intervals marked `exclude_from_sla` from the eligible denominator. Historical accuracy begins from recorded state transitions onward; old databases do not magically gain pre-upgrade history.
 
 ### Platform
 
@@ -335,6 +407,8 @@ Managed agent         critical when unavailable
 - `operator`: monitoring operations and write actions;
 - `viewer`: read-oriented UI access.
 
+Bearer sessions re-check the local user record on every authenticated request, so disabling an account invalidates its existing session and role changes take effect without waiting for token expiry.
+
 `Audit Log` records important administrative actions.
 
 `Settings` shows platform configuration and advanced component links.
@@ -343,7 +417,7 @@ Managed agent         critical when unavailable
 
 ## Managed agent architecture
 
-The default v0.3.0 architecture is outbound:
+Managed Agent is an optional enhanced monitoring mode and uses an outbound architecture:
 
 ```text
 Endpoint
@@ -369,6 +443,23 @@ See `docs/AGENT_DEPLOYMENT.md`.
 
 ---
 
+## Agentless architecture
+
+The `agentless-worker` reads enabled monitor assignments from PostgreSQL and polls targets concurrently.
+
+```text
+Windows target -> WinRM/CIM --+
+Linux target   -> SSH ---------+-> agentless-worker -> PostgreSQL -> /metrics -> Prometheus
+SNMP target    -> SNMP --------+                         |
+                                                       +-> Services / Problems / UI
+```
+
+After three consecutive collection failures, an assigned device can transition down; a successful poll clears the failure count and returns it up. The worker calls the problem engine after successful and failed polling transitions so state changes do not depend on a browser page being opened.
+
+See `docs/AGENTLESS_MONITORING.md`.
+
+---
+
 ## SNMP
 
 SNMP targets are stored in SentinelView inventory and exported through HTTP service discovery:
@@ -377,18 +468,22 @@ SNMP targets are stored in SentinelView inventory and exported through HTTP serv
 Device -> snmp_exporter -> Prometheus
 ```
 
-v0.3.0 includes generic target management and the `if_mib` path. Vendor-specific packs (APC, Vertiv, Cisco/Fortinet/MikroTik depth, etc.) remain explicit roadmap work rather than simulated support.
+Agentless generic SNMP polling additionally provides direct basic collection such as sysName/sysUpTime and supported HOST-RESOURCES data.
+
+Vendor-specific packs (APC, Vertiv, Cisco/Fortinet/MikroTik depth, etc.) remain explicit roadmap work rather than simulated support.
 
 ---
 
-## Problems vs Prometheus alerts
+## Problems, maintenance and notifications
 
-SentinelView currently has two complementary layers:
+SentinelView currently has complementary layers:
 
-1. **First-party problem engine**: derives current services/problems from latest control-plane telemetry and SentinelView monitoring rules.
-2. **Prometheus rule files**: provide Prometheus-native alert expressions for advanced monitoring workflows.
+1. **First-party problem engine**: derives current services/problems from latest control-plane telemetry and monitoring rules.
+2. **Maintenance engine**: matches global/site/device windows, suppresses requested problem notifications and excludes requested intervals from SLA accounting.
+3. **Notification delivery engine**: creates persistent delivery records for lifecycle transitions and sends them asynchronously through the notification worker.
+4. **Prometheus rule files**: provide Prometheus-native alert expressions for advanced monitoring workflows.
 
-Future releases can unify notification routing and Alertmanager-style dispatch while preserving the first-party UI state model.
+The notification engine is intentionally simpler than enterprise on-call products: policy trees, calendars, multi-step escalation chains and Alertmanager-compatible routing remain future work.
 
 ---
 
@@ -396,7 +491,7 @@ Future releases can unify notification routing and Alertmanager-style dispatch w
 
 v0.3.0 introduces local UI session authentication.
 
-The browser sends a signed bearer session token to the Control API through the UI reverse proxy.
+The browser sends a signed bearer session token to the Control API through the UI reverse proxy. The signed token establishes identity, while current user enabled/role state is re-read from PostgreSQL for authorization.
 
 External automation remains compatible with:
 
@@ -437,24 +532,28 @@ Do not use `-v` unless you intend to remove the database and metrics history.
 
 ---
 
-## Upgrade from v0.2.3
+## Upgrade notes
 
-v0.3.0 adds new tables rather than altering the v0.2.3 managed-agent tables, so `Base.metadata.create_all()` can create the new UI-domain tables in an existing lab database.
+The project continues to add new tables rather than altering the original managed-agent tables where possible, so `Base.metadata.create_all()` can create additive schema in an existing lab database.
 
-Added tables include:
+Current UI/operations tables include:
 
 ```text
 problems
 audit_events
 maintenance_windows
 notification_channels
+notification_deliveries
 sla_definitions
 local_users
+credential_profiles
+agentless_monitors
+agentless_telemetry_latest
 ```
 
 Existing devices, scans, managed agents, policies and telemetry remain intact.
 
-Because this project has not yet introduced Alembic migrations, take a database backup before non-trivial upgrades. Formal schema migrations are a roadmap item.
+Because this project has not yet introduced Alembic migrations, take a database backup before non-trivial upgrades. Formal schema migrations are still a roadmap item.
 
 ---
 
@@ -468,12 +567,15 @@ SENTINEL_DB_URL=sqlite:////tmp/sentinel-test.db \
 pytest -q services/control-api/tests
 ```
 
+The regression suite includes bootstrap duplicate-rule handling, live bearer-session role/disable behavior, encrypted notification configuration, notification delivery, maintenance suppression, SLA exclusion and full `/24` agentless assignment tests.
+
 ### UI syntax
 
 ```bash
 node --check services/web-ui/js/api.js
 node --check services/web-ui/js/ui.js
 node --check services/web-ui/js/app.js
+node --check services/web-ui/js/runtime-enhancements.js
 ```
 
 ### Configuration validation
@@ -485,7 +587,7 @@ python scripts/validate-config.py
 
 ### Go agent
 
-Requires Go 1.25+:
+Requires Go 1.25+ when building directly on a developer host:
 
 ```bash
 cd agents/sentinel-agent
@@ -495,7 +597,18 @@ go mod verify
 go test ./...
 ```
 
-The server Docker image also cross-compiles Linux and Windows agent artifacts during build.
+Go is **not** required on the host to run SentinelView through Docker. GitHub CI installs Go 1.25 and verifies/cross-compiles the Linux and Windows agent artifacts independently.
+
+### Integration workflow
+
+`.github/workflows/integration.yml` provides disposable external-condition coverage:
+
+- clean no-cache Docker application build on a GitHub-hosted Linux runner;
+- real OpenSSH target and real SNMP daemon collection;
+- three-failure agentless state transition followed by successful SSH recovery;
+- real WinRM/CIM collection on a disposable Windows GitHub runner.
+
+These tests are designed to close environment-dependent validation gaps without requiring permanent lab credentials or external hosts.
 
 ---
 
@@ -516,6 +629,12 @@ docker compose logs -f control-api
 
 # Discovery logs
 docker compose logs -f discovery-worker
+
+# Agentless logs
+docker compose logs -f agentless-worker
+
+# Notification delivery logs
+docker compose logs -f notification-worker
 
 # Restart UI
 docker compose restart web-ui
@@ -539,7 +658,7 @@ sentinelview/
 ├── agents/
 │   └── sentinel-agent/          Go managed agent
 ├── services/
-│   ├── control-api/             FastAPI control plane
+│   ├── control-api/             FastAPI control plane/workers
 │   └── web-ui/                  First-party operations UI
 ├── deploy/
 │   ├── prometheus/
@@ -551,10 +670,13 @@ sentinelview/
 │   ├── UI_GUIDE.md
 │   ├── OPERATIONS.md
 │   ├── AGENT_DEPLOYMENT.md
+│   ├── AGENTLESS_MONITORING.md
 │   ├── API.md
 │   ├── SECURITY.md
 │   ├── GRAFANA.md
 │   └── ROADMAP.md
+├── qa/
+│   └── integration/             Disposable real-target integration checks
 ├── scripts/
 ├── docker-compose.yml
 ├── .env.example
@@ -569,15 +691,15 @@ The following remain future work or partial foundations:
 
 - thousands of vendor-specific monitoring plugins;
 - full LLDP/CDP automatic topology inference;
-- production notification dispatch and escalation engine;
-- recurring maintenance scheduler logic;
+- enterprise notification policy trees, on-call scheduling and multi-stage escalation;
+- recurring maintenance recurrence rules beyond explicit start/end windows;
 - OIDC/LDAP/SAML;
 - distributed remote collectors and offline buffering;
 - HA control plane and PostgreSQL HA;
 - signed staged automatic agent upgrades with canary/rollback;
 - MSI/DEB/RPM release packages (one-command service installation is implemented);
 - mature service/application discovery for databases and middleware;
-- authoritative pre-v0.3.0 availability history;
+- authoritative availability history before state-transition recording began;
 - complete Checkmk Enterprise/Ultimate parity.
 
 These limitations are documented so a demo does not depend on fake functionality.
@@ -588,9 +710,9 @@ These limitations are documented so a demo does not depend on fake functionality
 
 The next engineering order is:
 
-1. v0.3.1: stronger rule inheritance, maintenance behavior, notification dispatch and SNMP credential management.
+1. v0.3.1: formal schema migrations, stronger rule inheritance, SNMP credential management and notification routing policies.
 2. v0.3.2: LLDP/CDP topology inference, interface-focused network views, APC UPS and Vertiv integration packs.
-3. v0.3.3: OIDC/RBAC hardening, reporting, SLA refinement and signed artifacts.
+3. v0.3.3: OIDC/RBAC hardening, reporting refinement, signed artifacts and release packaging.
 4. v0.4.0: remote collectors, multi-site distributed monitoring, buffering and HA-oriented deployment.
 
 See `docs/ROADMAP.md` for detail.
