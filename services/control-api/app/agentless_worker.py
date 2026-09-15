@@ -11,6 +11,7 @@ from .agentless_collectors import collect_target
 from .config import settings
 from .db import Base, SessionLocal, engine
 from .models import AgentlessMonitor, AgentlessTelemetryLatest, CredentialProfile, Device, Event
+from .monitoring import sync_problems
 from .secretbox import decrypt_secrets
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -94,6 +95,7 @@ def poll_monitor(monitor_id: str):
                          message=f"Collected {monitor.method} telemetry from {device.hostname or device.ip_address}",
                          details={"method": monitor.method}))
             db.commit()
+            sync_problems(db)
         except Exception as exc:
             now = utcnow()
             monitor = db.get(AgentlessMonitor, monitor_id)
@@ -111,6 +113,7 @@ def poll_monitor(monitor_id: str):
                                  message=f"{device.hostname or device.ip_address}: {previous_state} -> down",
                                  details={"from": previous_state, "to": "down", "source": monitor.method, "error": monitor.last_error}))
             db.commit()
+            sync_problems(db)
             log.warning("%s poll failed for %s: %s", monitor.method, device.ip_address if device else monitor.device_id, exc)
     finally:
         db.close()
