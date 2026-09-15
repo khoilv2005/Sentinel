@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import smtplib
 import ssl
 import uuid
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from .maintenance_engine import notifications_suppressed
 from .models import Device, NotificationChannel, Problem
 from .notification_models import NotificationDelivery
+from .secretbox import decrypt_secrets, encrypt_secrets
 
 
 MAX_ATTEMPTS = 5
@@ -37,6 +39,28 @@ def aware(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def pack_notification_config(config: dict | None) -> dict:
+    payload = json.dumps(config or {}, separators=(",", ":"), sort_keys=True)
+    return {"_encrypted": encrypt_secrets({"json": payload})}
+
+
+def unpack_notification_config(config: dict | None) -> dict:
+    stored = dict(config or {})
+    token = stored.get("_encrypted")
+    if not token:
+        # Backward compatibility for v0.3.0 channels created before encrypted
+        # notification configuration was introduced.
+        return stored
+    decrypted = decrypt_secrets(str(token))
+    try:
+        value = json.loads(decrypted.get("json", "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("notification configuration cannot be decoded") from exc
+    if not isinstance(value, dict):
+        raise ValueError("notification configuration must decode to an object")
+    return value
 
 
 def redact_config(config: dict | None) -> dict:
@@ -207,7 +231,7 @@ def _send_email(config: dict, payload: dict) -> None:
 
 
 def dispatch_channel(channel: NotificationChannel, payload: dict) -> None:
-    config = dict(channel.config or {})
+    config = unpack_notification_config(channel.config)
     validate_channel_config(channel.channel_type, config)
     timeout = float(config.get("timeout") or 8)
 
