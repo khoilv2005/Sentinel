@@ -9,8 +9,10 @@ from .maintenance_api import router as maintenance_router
 from .models import AuditEvent, NotificationChannel
 from .notification_engine import (
     enqueue_test_delivery,
+    pack_notification_config,
     process_delivery,
     redact_config,
+    unpack_notification_config,
     validate_channel_config,
 )
 from .notification_models import NotificationDelivery
@@ -39,7 +41,7 @@ def channel_out(row: NotificationChannel) -> dict:
         "name": row.name,
         "channel_type": row.channel_type,
         "enabled": row.enabled,
-        "config": redact_config(row.config or {}),
+        "config": redact_config(unpack_notification_config(row.config)),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -94,7 +96,12 @@ def create_notification_channel(
         validate_channel_config(channel_type, config)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    row = NotificationChannel(name=name, channel_type=channel_type, enabled=enabled, config=config)
+    row = NotificationChannel(
+        name=name,
+        channel_type=channel_type,
+        enabled=enabled,
+        config=pack_notification_config(config),
+    )
     db.add(row)
     db.flush()
     _audit(db, identity["username"], "create", "notification_channel", row.id, f"Created channel {row.name}", {"type": row.channel_type})
