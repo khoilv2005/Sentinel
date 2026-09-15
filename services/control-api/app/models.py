@@ -249,3 +249,50 @@ class LocalUser(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+
+class CredentialProfile(Base):
+    __tablename__ = "credential_profiles"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    credential_type: Mapped[str] = mapped_column(String(32), index=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    secret_encrypted: Mapped[str] = mapped_column(Text)
+    options_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AgentlessMonitor(Base):
+    __tablename__ = "agentless_monitors"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    device_id: Mapped[str] = mapped_column(String(36), ForeignKey("devices.id", ondelete="CASCADE"), index=True)
+    method: Mapped[str] = mapped_column(String(32), index=True)
+    credential_id: Mapped[str] = mapped_column(String(36), ForeignKey("credential_profiles.id"), index=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=60)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AgentlessTelemetryLatest(Base):
+    __tablename__ = "agentless_telemetry_latest"
+    device_id: Mapped[str] = mapped_column(String(36), ForeignKey("devices.id", ondelete="CASCADE"), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, default=utcnow)
+    cpu_usage_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_used_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_usage_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    uptime_seconds: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    process_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    disks: Mapped[list] = mapped_column(JSON, default=list)
+    interfaces: Mapped[list] = mapped_column(JSON, default=list)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

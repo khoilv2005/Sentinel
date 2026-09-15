@@ -20,6 +20,7 @@ from .models import (
     AgentEnrollmentToken,
     AgentPolicy,
     AgentTelemetryLatest,
+    AgentlessTelemetryLatest,
     AlertRule,
     Device,
     Event,
@@ -92,7 +93,8 @@ from .security import (
     require_write,
     verify_password,
 )
-from .monitoring import all_services, is_agent_online, services_for_device, sync_problems
+from .monitoring import all_services, is_agent_online, latest_telemetry_for_device, services_for_device, sync_problems
+from .agentless_api import router as agentless_router
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 logger = logging.getLogger("sentinelview")
@@ -161,6 +163,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"],
 )
+
+app.include_router(agentless_router)
 
 API_REQUESTS = Counter("sentinel_control_api_requests_total", "HTTP requests", ["method", "path", "status"])
 DEVICE_GAUGE = Gauge("sentinel_control_devices", "Devices stored in inventory", ["state", "device_class"])
@@ -287,6 +291,31 @@ def _refresh_metric_gauges(db: Session):
         t = telemetry.get(a.id)
         if not t:
             continue
+        if t.cpu_usage_percent is not None: CPU_USAGE.labels(*labels).set(t.cpu_usage_percent)
+        if t.memory_total_bytes is not None: MEM_TOTAL.labels(*labels).set(t.memory_total_bytes)
+        if t.memory_used_bytes is not None: MEM_USED.labels(*labels).set(t.memory_used_bytes)
+        if t.memory_usage_percent is not None: MEM_USAGE.labels(*labels).set(t.memory_usage_percent)
+        if t.uptime_seconds is not None: UPTIME.labels(*labels).set(t.uptime_seconds)
+        if t.process_count is not None: PROCESS_COUNT.labels(*labels).set(t.process_count)
+        for disk in t.disks or []:
+            mount = str(disk.get("mountpoint", "unknown")); fstype = str(disk.get("fstype", ""))
+            dlabels = (*labels, mount, fstype)
+            DISK_TOTAL.labels(*dlabels).set(float(disk.get("total_bytes", 0) or 0))
+            DISK_USED.labels(*dlabels).set(float(disk.get("used_bytes", 0) or 0))
+            DISK_USAGE.labels(*dlabels).set(float(disk.get("usage_percent", 0) or 0))
+        for nic in t.interfaces or []:
+            name = str(nic.get("name", "unknown")); nlabels = (*labels, name)
+            NET_RX.labels(*nlabels).set(float(nic.get("receive_bytes_total", 0) or 0))
+            NET_TX.labels(*nlabels).set(float(nic.get("transmit_bytes_total", 0) or 0))
+
+    managed_device_ids = {a.device_id for a in agents}
+    for t in db.execute(select(AgentlessTelemetryLatest)).scalars():
+        if t.device_id in managed_device_ids:
+            continue
+        d = db.get(Device, t.device_id)
+        if d is None:
+            continue
+        labels = (d.id, d.hostname or d.ip_address, d.site or "default")
         if t.cpu_usage_percent is not None: CPU_USAGE.labels(*labels).set(t.cpu_usage_percent)
         if t.memory_total_bytes is not None: MEM_TOTAL.labels(*labels).set(t.memory_total_bytes)
         if t.memory_used_bytes is not None: MEM_USED.labels(*labels).set(t.memory_used_bytes)
@@ -793,6 +822,7 @@ def _telemetry_dict(row: AgentTelemetryLatest | None) -> dict | None:
     if row is None:
         return None
     return {
+        "source": getattr(row, "source", "agent"),
         "collected_at": row.collected_at,
         "cpu_usage_percent": row.cpu_usage_percent,
         "memory_total_bytes": row.memory_total_bytes,
@@ -872,7 +902,7 @@ def host_overview(device_id: str, identity: dict = Depends(control_identity), db
     if device is None: raise HTTPException(404, "host not found")
     sync_problems(db)
     agent = _managed_agent_for_device(db, device.id)
-    telemetry = db.get(AgentTelemetryLatest, agent.id) if agent else None
+    telemetry, _telemetry_source = latest_telemetry_for_device(db, device)
     problems = list(db.execute(select(Problem).where(Problem.device_id == device.id, Problem.state != "resolved").order_by(desc(Problem.opened_at))).scalars())
     return HostOverviewOut(
         device=DeviceOut.model_validate(device), agent=_managed_agent_out(agent), telemetry=_telemetry_dict(telemetry),

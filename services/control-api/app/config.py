@@ -17,6 +17,8 @@ class Settings:
     admin_password = os.getenv("SENTINEL_ADMIN_PASSWORD", "admin")
     session_secret = os.getenv("SENTINEL_SESSION_SECRET", os.getenv("SENTINEL_API_KEY", "change-me-now"))
     session_hours = int(os.getenv("SENTINEL_SESSION_HOURS", "12"))
+    credential_secret = os.getenv("SENTINEL_CREDENTIAL_SECRET", os.getenv("SENTINEL_SESSION_SECRET", "change-me-session-secret"))
+    agentless_workers = int(os.getenv("SENTINEL_AGENTLESS_WORKERS", "24"))
 
 
 settings = Settings()

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import AgentTelemetryLatest, AlertRule, Device, ManagedAgent, Problem
+from .models import AgentlessMonitor, AgentlessTelemetryLatest, AgentTelemetryLatest, AlertRule, Device, ManagedAgent, Problem
 
 
 def utcnow() -> datetime:
@@ -58,10 +58,22 @@ def _rule_map(db: Session) -> dict[str, AlertRule]:
     }
 
 
+def latest_telemetry_for_device(db: Session, device: Device):
+    agent = db.execute(select(ManagedAgent).where(ManagedAgent.device_id == device.id)).scalar_one_or_none()
+    if agent is not None:
+        row = db.get(AgentTelemetryLatest, agent.id)
+        if row is not None:
+            return row, "agent"
+    row = db.get(AgentlessTelemetryLatest, device.id)
+    if row is not None:
+        return row, row.source
+    return None, None
+
+
 def services_for_device(db: Session, device: Device) -> list[dict]:
     rules = _rule_map(db)
     agent = db.execute(select(ManagedAgent).where(ManagedAgent.device_id == device.id)).scalar_one_or_none()
-    telemetry = db.get(AgentTelemetryLatest, agent.id) if agent else None
+    telemetry, telemetry_source = latest_telemetry_for_device(db, device)
     hostname = device.hostname or device.ip_address
     updated = (telemetry.collected_at if telemetry else device.last_seen)
     services: list[dict] = []
@@ -96,6 +108,30 @@ def services_for_device(db: Session, device: Device) -> list[dict]:
             "unit": None,
             "message": f"Agent {agent.version} is {'online' if online else 'offline'}",
             "updated_at": agent.last_checkin,
+        })
+
+    monitor = db.execute(
+        select(AgentlessMonitor)
+        .where(AgentlessMonitor.device_id == device.id, AgentlessMonitor.enabled.is_(True))
+        .order_by(AgentlessMonitor.updated_at.desc())
+    ).scalars().first()
+    if monitor is not None:
+        now = utcnow()
+        success = monitor.last_success_at
+        if success is not None and success.tzinfo is None:
+            success = success.replace(tzinfo=timezone.utc)
+        stale = success is None or (now - success).total_seconds() > max(120, monitor.interval_seconds * 3)
+        monitor_state = "critical" if stale and monitor.consecutive_failures >= 3 else "unknown" if success is None else "ok"
+        services.append({
+            "host_id": device.id,
+            "hostname": hostname,
+            "service_key": f"agentless:{monitor.method}",
+            "service_name": f"{monitor.method.upper()} monitoring",
+            "state": monitor_state,
+            "value": "connected" if monitor_state == "ok" else "unavailable" if monitor_state == "critical" else "pending",
+            "unit": None,
+            "message": monitor.last_error or f"{monitor.method.upper()} collector is healthy",
+            "updated_at": monitor.last_success_at or monitor.last_poll_at,
         })
 
     if telemetry:

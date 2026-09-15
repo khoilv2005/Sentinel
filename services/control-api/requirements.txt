@@ -5,3 +5,6 @@ psycopg[binary]>=3.2,<4.0
 prometheus-client>=0.22,<1.0
 httpx>=0.28,<1.0
 pytest>=8.4,<9.0
+cryptography>=44,<48
+paramiko>=3.5,<5
+pywinrm>=0.5,<1
