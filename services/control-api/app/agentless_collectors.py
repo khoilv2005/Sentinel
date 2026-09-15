@@ -46,7 +46,8 @@ $os = Get-CimInstance Win32_OperatingSystem
 $cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
 $total = [double]$os.TotalVisibleMemorySize * 1024
 $free = [double]$os.FreePhysicalMemory * 1024
-$used = [math]::Max(0, $total - $free)
+$used = [double]($total - $free)
+if ($used -lt 0) { $used = 0.0 }
 $memPct = if ($total -gt 0) { [math]::Round(($used / $total) * 100, 2) } else { $null }
 $disks = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
   $usedDisk = [double]$_.Size - [double]$_.FreeSpace
