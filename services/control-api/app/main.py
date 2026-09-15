@@ -632,7 +632,10 @@ $ErrorActionPreference = "Stop"
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Write-Host "Requesting Administrator privileges..."
-  $elevateArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'),'-Server',('"'+$Server+'"'),'-Token',('"'+$Token+'"'),'-Site',('"'+$Site+'"'),'-Tags',('"'+$Tags+'"'))
+  $elevateArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$PSCommandPath+'"'),'-Server',('"'+$Server+'"'),'-Token',('"'+$Token+'"'),'-Site',('"'+$Site+'"'))
+if (-not [string]::IsNullOrWhiteSpace($Tags)) {
+  $elevateArgs += @('-Tags', ('"'+$Tags+'"'))
+}
   Start-Process powershell.exe -Verb RunAs -ArgumentList $elevateArgs
   exit
 }
@@ -646,7 +649,11 @@ $expected = ((Get-Content $sumFile -Raw).Trim() -split '\s+')[0].ToLowerInvarian
 $actual = (Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLowerInvariant()
 if ($expected -ne $actual) { throw "Agent SHA-256 verification failed" }
 Write-Host "SHA-256 verified. Installing and enrolling agent..."
-& $tmp install --server $Server --token $Token --site $Site --tags $Tags
+$installArgs = @('install','--server',$Server,'--token',$Token,'--site',$Site)
+if (-not [string]::IsNullOrWhiteSpace($Tags)) {
+  $installArgs += @('--tags', $Tags)
+}
+& $tmp @installArgs
 if ($LASTEXITCODE -ne 0) { throw "SentinelView Agent installation failed with exit code $LASTEXITCODE" }
 $configPath = Join-Path $env:ProgramData "SentinelView\agent.json"
 if (Test-Path $configPath) {
