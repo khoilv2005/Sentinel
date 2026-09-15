@@ -133,7 +133,7 @@ def ensure_bootstrap_data():
             ("Managed agent availability", "sentinel_agent_up", "<", None, 1.0, 120),
         ]
         for name, metric, operator, warning, critical, duration in defaults:
-            exists = db.execute(select(AlertRule).where(AlertRule.metric == metric)).scalar_one_or_none()
+            exists = db.execute(select(AlertRule).where(AlertRule.name == name)).scalar_one_or_none()
             if exists is None:
                 db.add(AlertRule(
                     name=name, metric=metric, operator=operator, warning_threshold=warning,
@@ -1163,6 +1163,7 @@ def platform_settings(identity: dict = Depends(control_identity), db: Session = 
         "features": {
             "first_party_ui": True, "managed_agents": True, "discovery": True, "problems": True,
             "services": True, "rules": True, "topology": True, "maintenance": True, "availability": True,
+            "notification_dispatch": True, "maintenance_suppression": True, "sla_maintenance_exclusion": True,
             "local_rbac": True, "grafana_optional_ui": True,
         },
     }
