@@ -12,7 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .maintenance_engine import notifications_suppressed
-from .models import Device, NotificationChannel, NotificationDelivery, Problem
+from .models import Device, NotificationChannel, Problem
+from .notification_models import NotificationDelivery
 
 
 MAX_ATTEMPTS = 5
