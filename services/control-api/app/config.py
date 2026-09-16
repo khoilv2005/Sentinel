@@ -18,7 +18,15 @@ class Settings:
     session_secret = os.getenv("SENTINEL_SESSION_SECRET", os.getenv("SENTINEL_API_KEY", "change-me-now"))
     session_hours = int(os.getenv("SENTINEL_SESSION_HOURS", "12"))
     credential_secret = os.getenv("SENTINEL_CREDENTIAL_SECRET", os.getenv("SENTINEL_SESSION_SECRET", "change-me-session-secret"))
-    agentless_workers = int(os.getenv("SENTINEL_AGENTLESS_WORKERS", "24"))
+
+    # v0.4 product terminology is collector-worker. Keep the old environment
+    # variable as a compatibility fallback for existing deployments.
+    collector_workers = int(os.getenv(
+        "SENTINEL_COLLECTOR_WORKERS",
+        os.getenv("SENTINEL_AGENTLESS_WORKERS", "24"),
+    ))
+    agentless_workers = collector_workers
+
     notification_poll_seconds = float(os.getenv("SENTINEL_NOTIFICATION_POLL_SECONDS", "2"))
     notification_batch_size = int(os.getenv("SENTINEL_NOTIFICATION_BATCH_SIZE", "100"))
 
