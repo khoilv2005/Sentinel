@@ -1,4 +1,4 @@
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 
 from app.main import app
 
@@ -7,13 +7,25 @@ def _endpoint_name(route: APIRoute) -> str:
     return f"{route.endpoint.__module__}.{route.endpoint.__name__}"
 
 
+def _effective_api_routes():
+    """Yield fully resolved API paths, including live included routers.
+
+    FastAPI 0.137+ keeps ``include_router()`` registrations as live included
+    routers instead of flattening every child into ``app.router.routes``.
+    ``iter_route_contexts`` is therefore the authoritative way to inspect the
+    effective routing table in tests.
+    """
+    for context in iter_route_contexts(app.routes):
+        route = context.route
+        if isinstance(route, APIRoute):
+            yield context.path, route
+
+
 def test_api_method_path_pairs_are_unique():
     seen = set()
     duplicates = []
-    for route in app.router.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        key = (route.path, tuple(sorted(route.methods or ())))
+    for path, route in _effective_api_routes():
+        key = (path, tuple(sorted(route.methods or ())))
         if key in seen:
             duplicates.append((key, _endpoint_name(route)))
         seen.add(key)
@@ -22,19 +34,19 @@ def test_api_method_path_pairs_are_unique():
 
 
 def test_modular_notification_and_maintenance_routes_are_effective():
-    routes = [route for route in app.router.routes if isinstance(route, APIRoute)]
+    routes = list(_effective_api_routes())
     endpoints = {
-        (route.path, tuple(sorted(route.methods or ()))): _endpoint_name(route)
-        for route in routes
+        (path, tuple(sorted(route.methods or ()))): _endpoint_name(route)
+        for path, route in routes
     }
     operations = [
-        (route.path, tuple(sorted(route.methods or ())), _endpoint_name(route))
-        for route in routes
-        if any(token in route.path for token in ("notification", "maintenance", "availability"))
+        (path, tuple(sorted(route.methods or ())), _endpoint_name(route))
+        for path, route in routes
+        if any(token in path for token in ("notification", "maintenance", "availability"))
     ]
     modular = [
-        (route.path, tuple(sorted(route.methods or ())), _endpoint_name(route))
-        for route in routes
+        (path, tuple(sorted(route.methods or ())), _endpoint_name(route))
+        for path, route in routes
         if route.endpoint.__module__ in {"app.notification_api", "app.maintenance_api"}
     ]
     diagnostics = {"operations": operations, "modular": modular}
