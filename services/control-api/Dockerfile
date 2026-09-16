@@ -27,4 +27,4 @@ COPY services/control-api/tests ./tests
 COPY --from=agent-build /out /opt/sentinel/artifacts
 ENV SENTINEL_ARTIFACT_DIR=/opt/sentinel/artifacts
 EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "app.application:app", "--host", "0.0.0.0", "--port", "8080"]
