@@ -13,7 +13,21 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r services/control-api/requirements.txt
-      - run: PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-ci.db pytest -q services/control-api/tests
+      - name: Inspect modular API routes
+        run: |
+          PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-ci.db python - <<'PY'
+          from fastapi.routing import APIRoute
+          from app.main import app
+
+          rows = []
+          for route in app.router.routes:
+              if not isinstance(route, APIRoute):
+                  continue
+              if any(token in route.path for token in ("notification", "maintenance", "availability")):
+                  rows.append((route.path, sorted(route.methods or ()), route.endpoint.__module__, route.endpoint.__name__))
+          print("MODULAR_ROUTE_DIAGNOSTICS", rows)
+          PY
+      - run: PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-ci.db pytest -vv services/control-api/tests
 
   agent:
     runs-on: ubuntu-latest
