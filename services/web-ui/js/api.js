@@ -14,13 +14,24 @@ export function clearSession() {
   localStorage.removeItem(USER_KEY);
 }
 
+function canonicalApiPath(path) {
+  if (typeof path !== 'string') return path;
+  // v0.4 consolidates the operator-facing concept under /monitoring while
+  // keeping /agentless aliases server-side for older automation clients.
+  return path
+    .replace('/api/v1/agentless/monitors', '/api/v1/monitoring/assignments')
+    .replace('/api/v1/agentless/candidates', '/api/v1/monitoring/candidates')
+    .replace('/api/v1/agentless/test', '/api/v1/monitoring/test');
+}
+
 export async function api(path, options = {}) {
+  const requestPath = canonicalApiPath(path);
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const token = getToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(path, { ...options, headers });
-  if (response.status === 401 && !path.includes('/auth/login')) {
+  const response = await fetch(requestPath, { ...options, headers });
+  if (response.status === 401 && !requestPath.includes('/auth/login')) {
     clearSession();
     window.dispatchEvent(new CustomEvent('sentinel-auth-expired'));
   }
