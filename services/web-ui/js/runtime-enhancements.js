@@ -7,9 +7,9 @@ let running = false;
 
 const DOMAIN_GROUPS = {
   assets: { parent: 'hosts', title: 'Assets', routes: [['hosts','All assets'],['services','Services'],['topology','Topology'],['discovery','Discover'],['devices','Inventory details']] },
-  monitoring: { parent: 'agents', title: 'Monitoring', routes: [['agents','Managed agent'],['agentless','Remote collectors'],['credentials','Credentials'],['policies','Agent settings'],['snmp','SNMP exporter']] },
+  monitoring: { parent: 'agents', title: 'Monitoring', routes: [['agents','Managed agent'],['agentless','Remote collectors'],['credentials','Credentials'],['policies','Agent settings']] },
   alerts: { parent: 'rules', title: 'Alerts', routes: [['rules','Rules'],['notifications','Notifications'],['maintenance','Maintenance']] },
-  settings: { parent: 'settings', title: 'Settings', routes: [['settings','Platform'],['integrations','Capabilities']] },
+  settings: { parent: 'settings', title: 'Settings', routes: [['settings','Platform'],['integrations','Capabilities'],['snmp','Legacy SNMP exporter']] },
 };
 
 const ROUTE_TO_DOMAIN = Object.fromEntries(Object.entries(DOMAIN_GROUPS).flatMap(([key, group]) => group.routes.map(([route]) => [route, { key, ...group }])));
@@ -110,8 +110,9 @@ function enhanceMaintenance() {
 function enhanceAvailability(){ $('#page-subtitle').textContent='Maintenance-aware availability history and service-level targets'; for(const cell of root.querySelectorAll('td')){if(cell.textContent.trim()==='null%'||cell.textContent.trim()==='undefined%')cell.textContent='—';} }
 function enhanceDiscovery(){ replacePanelCopy('Network discovery','Find assets only; monitoring and health are configured separately'); }
 function enhanceRemoteCollectors(){ replacePanelCopy('Agentless monitoring','Assign remote monitoring methods to assets that already exist in inventory'); const notice=[...root.querySelectorAll('.notice')].find(node=>node.textContent.includes('WinRM')); if(notice)notice.innerHTML='<strong>Remote collectors</strong> use WinRM, SSH or SNMP against existing Assets. Discovery creates inventory; monitoring assignments collect health and performance. Sentinel Agent remains an optional enhanced method.'; }
+function enhanceLegacySnmp(){ replacePanelCopy('Add SNMP target','Legacy snmp_exporter compatibility target'); const notice=[...root.querySelectorAll('.notice')].find(node=>node.textContent.includes('snmp_exporter')); if(notice)notice.innerHTML='<strong>Compatibility view.</strong> New SNMP monitoring should be configured under Monitoring → Remote collectors. This page remains temporarily for existing Prometheus snmp_exporter target metadata and will be removed after migration.'; }
 
-async function applyEnhancements(){if(running||!root)return;running=true;try{ensureStyles();consolidateNavigation();ensureDomainTabs();const route=routeName();if(route==='notifications')await enhanceNotifications();else if(route==='maintenance')enhanceMaintenance();else if(route==='availability')enhanceAvailability();else if(route==='discovery')enhanceDiscovery();else if(route==='agentless')enhanceRemoteCollectors();}finally{running=false;}}
+async function applyEnhancements(){if(running||!root)return;running=true;try{ensureStyles();consolidateNavigation();ensureDomainTabs();const route=routeName();if(route==='notifications')await enhanceNotifications();else if(route==='maintenance')enhanceMaintenance();else if(route==='availability')enhanceAvailability();else if(route==='discovery')enhanceDiscovery();else if(route==='agentless')enhanceRemoteCollectors();else if(route==='snmp')enhanceLegacySnmp();}finally{running=false;}}
 function scheduleEnhancement(){if(scheduled)return;scheduled=true;setTimeout(async()=>{scheduled=false;await applyEnhancements();},50);}
 if(root)new MutationObserver(()=>scheduleEnhancement()).observe(root,{childList:true,subtree:true});
 window.addEventListener('hashchange',scheduleEnhancement);window.addEventListener('load',scheduleEnhancement);scheduleEnhancement();
