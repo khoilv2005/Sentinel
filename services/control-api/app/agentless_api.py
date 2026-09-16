@@ -4,12 +4,13 @@ import ipaddress
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .agentless_collectors import collect_target
+from .collector_models import CollectorTelemetryLatest
 from .db import get_db
 from .models import AgentlessMonitor, AgentlessTelemetryLatest, AuditEvent, CredentialProfile, Device
 from .netutils import parse_private_network
@@ -17,7 +18,9 @@ from .notification_api import router as notification_router
 from .secretbox import decrypt_secrets, encrypt_secrets
 from .security import control_identity, require_write
 
-router = APIRouter(prefix="/api/v1", tags=["agentless-monitoring"])
+# The legacy /agentless/* endpoints remain as compatibility aliases in v0.4.
+# New UI and automation should use /monitoring/* terminology.
+router = APIRouter(prefix="/api/v1", tags=["monitoring"])
 
 
 def utcnow() -> datetime:
@@ -49,8 +52,23 @@ class MonitorTest(BaseModel):
     target: str
 
 
-def _audit(db: Session, actor: str, action: str, object_type: str, object_id: str | None, message: str, details: dict | None = None):
-    db.add(AuditEvent(actor=actor, action=action, object_type=object_type, object_id=object_id, message=message, details=details or {}))
+def _audit(
+    db: Session,
+    actor: str,
+    action: str,
+    object_type: str,
+    object_id: str | None,
+    message: str,
+    details: dict | None = None,
+):
+    db.add(AuditEvent(
+        actor=actor,
+        action=action,
+        object_type=object_type,
+        object_id=object_id,
+        message=message,
+        details=details or {},
+    ))
 
 
 def _credential_secrets(payload: CredentialCreate) -> dict[str, str]:
@@ -106,18 +124,27 @@ def _private_ip(value: str) -> str:
     except ValueError as exc:
         raise HTTPException(400, f"invalid IP address: {value}") from exc
     if not (ip.is_private or ip.is_link_local or ip.is_loopback):
-        raise HTTPException(400, "agentless monitoring is limited to private/link-local targets")
+        raise HTTPException(400, "monitoring is limited to private/link-local targets")
     return str(ip)
 
 
 @router.get("/credentials")
 def list_credentials(identity: dict = Depends(control_identity), db: Session = Depends(get_db)):
-    return [_credential_out(row) for row in db.execute(select(CredentialProfile).order_by(CredentialProfile.name)).scalars()]
+    return [
+        _credential_out(row)
+        for row in db.execute(select(CredentialProfile).order_by(CredentialProfile.name)).scalars()
+    ]
 
 
 @router.post("/credentials")
-def create_credential(payload: CredentialCreate, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
-    if db.execute(select(CredentialProfile).where(CredentialProfile.name == payload.name)).scalar_one_or_none():
+def create_credential(
+    payload: CredentialCreate,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
+    if db.execute(
+        select(CredentialProfile).where(CredentialProfile.name == payload.name)
+    ).scalar_one_or_none():
         raise HTTPException(409, "credential profile name already exists")
     row = CredentialProfile(
         name=payload.name,
@@ -127,19 +154,38 @@ def create_credential(payload: CredentialCreate, identity: dict = Depends(requir
         options_json=payload.options,
         enabled=True,
     )
-    db.add(row); db.flush()
-    _audit(db, identity["username"], "create", "credential", row.id, f"Created credential profile {row.name}", {"type": row.credential_type})
-    db.commit(); db.refresh(row)
+    db.add(row)
+    db.flush()
+    _audit(
+        db,
+        identity["username"],
+        "create",
+        "credential",
+        row.id,
+        f"Created credential profile {row.name}",
+        {"type": row.credential_type},
+    )
+    db.commit()
+    db.refresh(row)
     return _credential_out(row)
 
 
 @router.delete("/credentials/{credential_id}")
-def delete_credential(credential_id: str, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
+def delete_credential(
+    credential_id: str,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
     row = db.get(CredentialProfile, credential_id)
     if row is None:
         raise HTTPException(404, "credential profile not found")
-    if db.execute(select(AgentlessMonitor).where(AgentlessMonitor.credential_id == credential_id, AgentlessMonitor.enabled.is_(True))).scalar_one_or_none():
-        raise HTTPException(409, "credential is used by an enabled monitor")
+    if db.execute(
+        select(AgentlessMonitor).where(
+            AgentlessMonitor.credential_id == credential_id,
+            AgentlessMonitor.enabled.is_(True),
+        )
+    ).scalar_one_or_none():
+        raise HTTPException(409, "credential is used by an enabled monitoring assignment")
     name = row.name
     db.delete(row)
     _audit(db, identity["username"], "delete", "credential", credential_id, f"Deleted credential profile {name}")
@@ -147,13 +193,29 @@ def delete_credential(credential_id: str, identity: dict = Depends(require_write
     return {"deleted": credential_id}
 
 
-@router.get("/agentless/candidates")
-def list_candidates(cidr: str, identity: dict = Depends(control_identity), db: Session = Depends(get_db)):
+def _in_network(ip_value: str, net) -> bool:
+    try:
+        return ipaddress.ip_address(ip_value) in net
+    except ValueError:
+        return False
+
+
+@router.get("/monitoring/candidates")
+@router.get("/agentless/candidates", include_in_schema=False)
+def list_candidates(
+    cidr: str,
+    identity: dict = Depends(control_identity),
+    db: Session = Depends(get_db),
+):
     try:
         net = parse_private_network(cidr)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    devices = {d.ip_address: d for d in db.execute(select(Device)).scalars() if _in_network(d.ip_address, net)}
+    devices = {
+        d.ip_address: d
+        for d in db.execute(select(Device)).scalars()
+        if _in_network(d.ip_address, net)
+    }
     return [{
         "ip_address": str(ip),
         "device_id": devices.get(str(ip)).id if devices.get(str(ip)) else None,
@@ -161,13 +223,6 @@ def list_candidates(cidr: str, identity: dict = Depends(control_identity), db: S
         "state": devices.get(str(ip)).state if devices.get(str(ip)) else "unseen",
         "discovered": str(ip) in devices,
     } for ip in net.hosts()]
-
-
-def _in_network(ip_value: str, net) -> bool:
-    try:
-        return ipaddress.ip_address(ip_value) in net
-    except ValueError:
-        return False
 
 
 def _targets_for_request(payload: BulkMonitorCreate, db: Session) -> list[str]:
@@ -183,11 +238,20 @@ def _targets_for_request(payload: BulkMonitorCreate, db: Session) -> list[str]:
         raise HTTPException(400, str(exc)) from exc
     if payload.scope == "cidr_all":
         return [str(ip) for ip in net.hosts()]
-    return [d.ip_address for d in db.execute(select(Device)).scalars() if _in_network(d.ip_address, net)]
+    return [
+        d.ip_address
+        for d in db.execute(select(Device)).scalars()
+        if _in_network(d.ip_address, net)
+    ]
 
 
-@router.post("/agentless/monitors/bulk")
-def create_monitors(payload: BulkMonitorCreate, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
+@router.post("/monitoring/assignments/bulk")
+@router.post("/agentless/monitors/bulk", include_in_schema=False)
+def create_monitors(
+    payload: BulkMonitorCreate,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
     credential = db.get(CredentialProfile, payload.credential_id)
     if credential is None or not credential.enabled:
         raise HTTPException(404, "credential profile not found or disabled")
@@ -195,37 +259,86 @@ def create_monitors(payload: BulkMonitorCreate, identity: dict = Depends(require
     targets = _targets_for_request(payload, db)
     created = 0
     updated = 0
+
     for ip_value in targets:
-        device = db.execute(select(Device).where(Device.ip_address == ip_value)).scalar_one_or_none()
+        device = db.execute(
+            select(Device).where(Device.ip_address == ip_value)
+        ).scalar_one_or_none()
         if device is None:
-            device = Device(ip_address=ip_value, first_seen=utcnow(), state="unknown", device_class="unknown", site=payload.site)
-            db.add(device); db.flush()
+            # This is an explicit Add/Monitor operation, not discovery. The
+            # asset starts UNKNOWN until a monitoring method returns evidence.
+            device = Device(
+                ip_address=ip_value,
+                first_seen=utcnow(),
+                state="unknown",
+                device_class="unknown",
+                site=payload.site,
+            )
+            db.add(device)
+            db.flush()
         elif payload.site and not device.site:
             device.site = payload.site
-        monitor = db.execute(select(AgentlessMonitor).where(AgentlessMonitor.device_id == device.id, AgentlessMonitor.method == payload.method)).scalar_one_or_none()
+
+        monitor = db.execute(
+            select(AgentlessMonitor).where(
+                AgentlessMonitor.device_id == device.id,
+                AgentlessMonitor.method == payload.method,
+            )
+        ).scalar_one_or_none()
         if monitor is None:
             monitor = AgentlessMonitor(
-                device_id=device.id, method=payload.method, credential_id=credential.id,
-                interval_seconds=payload.interval_seconds, enabled=True,
+                device_id=device.id,
+                method=payload.method,
+                credential_id=credential.id,
+                interval_seconds=payload.interval_seconds,
+                enabled=True,
             )
-            db.add(monitor); created += 1
+            db.add(monitor)
+            created += 1
         else:
             monitor.credential_id = credential.id
             monitor.interval_seconds = payload.interval_seconds
             monitor.enabled = True
             monitor.last_error = None
             updated += 1
-    _audit(db, identity["username"], "bulk_enable", "agentless_monitor", None,
-           f"Enabled {payload.method} monitoring for {len(targets)} target(s)",
-           {"scope": payload.scope, "cidr": payload.cidr, "created": created, "updated": updated})
+
+    _audit(
+        db,
+        identity["username"],
+        "bulk_enable",
+        "monitor_assignment",
+        None,
+        f"Enabled {payload.method} monitoring for {len(targets)} target(s)",
+        {"scope": payload.scope, "cidr": payload.cidr, "created": created, "updated": updated},
+    )
     db.commit()
     return {"targets": len(targets), "created": created, "updated": updated}
+
+
+def _telemetry_out(telemetry) -> dict | None:
+    if telemetry is None:
+        return None
+    return {
+        "source": getattr(telemetry, "method", None) or getattr(telemetry, "source", None),
+        "collected_at": telemetry.collected_at,
+        "cpu_usage_percent": telemetry.cpu_usage_percent,
+        "memory_usage_percent": telemetry.memory_usage_percent,
+        "uptime_seconds": telemetry.uptime_seconds,
+        "process_count": telemetry.process_count,
+        "disks": telemetry.disks or [],
+        "interfaces": telemetry.interfaces or [],
+    }
 
 
 def _monitor_out(row: AgentlessMonitor, db: Session) -> dict:
     device = db.get(Device, row.device_id)
     credential = db.get(CredentialProfile, row.credential_id)
-    telemetry = db.get(AgentlessTelemetryLatest, row.device_id)
+    telemetry = db.get(CollectorTelemetryLatest, row.id)
+    if telemetry is None:
+        # Compatibility with pre-v0.4 rows until each assignment has polled.
+        legacy = db.get(AgentlessTelemetryLatest, row.device_id)
+        if legacy is not None and legacy.source == row.method:
+            telemetry = legacy
     return {
         "id": row.id,
         "device_id": row.device_id,
@@ -241,55 +354,80 @@ def _monitor_out(row: AgentlessMonitor, db: Session) -> dict:
         "last_success_at": row.last_success_at,
         "last_error": row.last_error,
         "consecutive_failures": row.consecutive_failures,
-        "telemetry": None if telemetry is None else {
-            "source": telemetry.source,
-            "collected_at": telemetry.collected_at,
-            "cpu_usage_percent": telemetry.cpu_usage_percent,
-            "memory_usage_percent": telemetry.memory_usage_percent,
-            "uptime_seconds": telemetry.uptime_seconds,
-            "process_count": telemetry.process_count,
-            "disks": telemetry.disks or [],
-            "interfaces": telemetry.interfaces or [],
-        },
+        "telemetry": _telemetry_out(telemetry),
     }
 
 
-@router.get("/agentless/monitors")
-def list_monitors(identity: dict = Depends(control_identity), db: Session = Depends(get_db)):
-    rows = list(db.execute(select(AgentlessMonitor).order_by(AgentlessMonitor.created_at.desc())).scalars())
+@router.get("/monitoring/assignments")
+@router.get("/agentless/monitors", include_in_schema=False)
+def list_monitors(
+    identity: dict = Depends(control_identity),
+    db: Session = Depends(get_db),
+):
+    rows = list(db.execute(
+        select(AgentlessMonitor).order_by(AgentlessMonitor.created_at.desc())
+    ).scalars())
     return [_monitor_out(row, db) for row in rows]
 
 
-@router.delete("/agentless/monitors/{monitor_id}")
-def delete_monitor(monitor_id: str, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
+@router.delete("/monitoring/assignments/{monitor_id}")
+@router.delete("/agentless/monitors/{monitor_id}", include_in_schema=False)
+def delete_monitor(
+    monitor_id: str,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
     row = db.get(AgentlessMonitor, monitor_id)
     if row is None:
-        raise HTTPException(404, "monitor not found")
+        raise HTTPException(404, "monitoring assignment not found")
     db.delete(row)
-    _audit(db, identity["username"], "delete", "agentless_monitor", monitor_id, "Deleted agentless monitor")
+    _audit(
+        db,
+        identity["username"],
+        "delete",
+        "monitor_assignment",
+        monitor_id,
+        "Deleted monitoring assignment",
+    )
     db.commit()
     return {"deleted": monitor_id}
 
 
-@router.post("/agentless/test")
-def test_monitor(payload: MonitorTest, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
+@router.post("/monitoring/test")
+@router.post("/agentless/test", include_in_schema=False)
+def test_monitor(
+    payload: MonitorTest,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
     target = _private_ip(payload.target)
     credential = db.get(CredentialProfile, payload.credential_id)
     if credential is None or not credential.enabled:
         raise HTTPException(404, "credential profile not found or disabled")
     _validate_method(credential, payload.method)
     try:
-        data = collect_target(payload.method, target, credential.username, decrypt_secrets(credential.secret_encrypted), credential.options_json or {})
+        data = collect_target(
+            payload.method,
+            target,
+            credential.username,
+            decrypt_secrets(credential.secret_encrypted),
+            credential.options_json or {},
+        )
     except Exception as exc:
         raise HTTPException(502, f"connection failed: {exc}") from exc
     return {"status": "ok", "target": target, "method": payload.method, "sample": data}
 
 
-@router.post("/agentless/monitors/{monitor_id}/poll")
-def request_poll(monitor_id: str, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
+@router.post("/monitoring/assignments/{monitor_id}/poll")
+@router.post("/agentless/monitors/{monitor_id}/poll", include_in_schema=False)
+def request_poll(
+    monitor_id: str,
+    identity: dict = Depends(require_write),
+    db: Session = Depends(get_db),
+):
     row = db.get(AgentlessMonitor, monitor_id)
     if row is None:
-        raise HTTPException(404, "monitor not found")
+        raise HTTPException(404, "monitoring assignment not found")
     row.last_poll_at = None
     row.enabled = True
     db.commit()
