@@ -67,7 +67,6 @@ def poll_monitor(monitor_id: str):
             )
             now = utcnow()
 
-            # Assignment-scoped telemetry is the v0.4 source of truth.
             write_assignment_telemetry(db, monitor, result, now)
 
             device.last_seen = now
@@ -95,8 +94,6 @@ def poll_monitor(monitor_id: str):
                 )
             )
             db.commit()
-            # sync_problems also reconciles overall Asset health from all active
-            # monitoring methods, so one collector cannot overwrite another.
             sync_problems(db)
         except Exception as exc:
             now = utcnow()
@@ -122,7 +119,7 @@ def poll_monitor(monitor_id: str):
 
 
 def loop():
-    workers = max(1, min(64, int(settings.agentless_workers)))
+    workers = max(1, min(64, int(settings.collector_workers)))
     log.info("SentinelView collector worker started with %s poll workers", workers)
     pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="collector")
     try:
