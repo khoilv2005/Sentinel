@@ -39,7 +39,7 @@ function ensureStyles() {
   if (document.getElementById('sentinel-runtime-enhancement-style')) return;
   const style = document.createElement('style');
   style.id = 'sentinel-runtime-enhancement-style';
-  style.textContent = '.badge.suppressed{background:#202936;border-color:#41526a;color:#a9c5e8}.delivery-error{max-width:420px;white-space:normal;overflow-wrap:anywhere}.domain-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;margin-bottom:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel,#111827)}.domain-tab{display:inline-flex;align-items:center;padding:7px 10px;border-radius:7px;text-decoration:none;color:inherit;border:1px solid transparent;font-size:13px;font-weight:600}.domain-tab:hover{border-color:var(--border)}.domain-tab.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.35);color:#bfdbfe}';
+  style.textContent = '.badge.suppressed{background:#202936;border-color:#41526a;color:#a9c5e8}.badge.degraded{background:#312713;border-color:#5a4820;color:#f4c96d}.state-dot.degraded{background:var(--yellow)}.delivery-error{max-width:420px;white-space:normal;overflow-wrap:anywhere}.domain-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;margin-bottom:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel,#111827)}.domain-tab{display:inline-flex;align-items:center;padding:7px 10px;border-radius:7px;text-decoration:none;color:inherit;border:1px solid transparent;font-size:13px;font-weight:600}.domain-tab:hover{border-color:var(--border)}.domain-tab.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.35);color:#bfdbfe}';
   document.head.appendChild(style);
 }
 
@@ -74,6 +74,41 @@ function ensureDomainTabs() {
     const label = domain.routes.find(([target]) => target === route)?.[1] || '';
     pageSubtitle.textContent = `${label} · consolidated ${domain.title.toLowerCase()} workflow`;
   }
+}
+
+async function enhanceDashboard() {
+  const cards = [...root.querySelectorAll('.stat-card')];
+  const assetCard = cards.find(card => card.querySelector('.stat-label')?.textContent.trim() === 'Hosts');
+  if (!assetCard) return;
+  try {
+    const devices = await api('/api/v1/devices?limit=5000');
+    const counts = devices.reduce((acc, device) => {
+      const key = ['up','degraded','down'].includes(device.state) ? device.state : 'unknown';
+      acc[key] += 1;
+      return acc;
+    }, { up:0, degraded:0, down:0, unknown:0 });
+    assetCard.querySelector('.stat-label').textContent = 'Assets';
+    assetCard.querySelector('.stat-value').textContent = String(devices.length);
+    assetCard.querySelector('.stat-detail').textContent = `${counts.up} up · ${counts.degraded} degraded · ${counts.down} down · ${counts.unknown} unknown`;
+    assetCard.classList.remove('green','yellow','red');
+    assetCard.classList.add(counts.down ? 'red' : counts.degraded ? 'yellow' : 'green');
+  } catch (error) {
+    console.warn('Could not enhance Dashboard asset health', error);
+  }
+}
+
+function enhanceAssets() {
+  const stateFilter = $('#hosts-state');
+  if (stateFilter && !stateFilter.querySelector('option[value="degraded"]')) {
+    const option = document.createElement('option');
+    option.value = 'degraded';
+    option.textContent = 'Degraded';
+    stateFilter.insertBefore(option, stateFilter.querySelector('option[value="unknown"]'));
+  }
+  const panelTitle = root.querySelector('.panel-head h2');
+  if (panelTitle?.textContent.trim() === 'Hosts') panelTitle.textContent = 'Assets';
+  const monitoredCopy = root.querySelector('.panel-head p');
+  if (monitoredCopy?.textContent.includes('monitored assets')) monitoredCopy.textContent = monitoredCopy.textContent.replace('monitored assets','infrastructure assets');
 }
 
 async function enhanceNotifications() {
@@ -112,7 +147,24 @@ function enhanceDiscovery(){ replacePanelCopy('Network discovery','Find assets o
 function enhanceRemoteCollectors(){ replacePanelCopy('Agentless monitoring','Assign remote monitoring methods to assets that already exist in inventory'); const notice=[...root.querySelectorAll('.notice')].find(node=>node.textContent.includes('WinRM')); if(notice)notice.innerHTML='<strong>Remote collectors</strong> use WinRM, SSH or SNMP against existing Assets. Discovery creates inventory; monitoring assignments collect health and performance. Sentinel Agent remains an optional enhanced method.'; }
 function enhanceLegacySnmp(){ replacePanelCopy('Add SNMP target','Legacy snmp_exporter compatibility target'); const notice=[...root.querySelectorAll('.notice')].find(node=>node.textContent.includes('snmp_exporter')); if(notice)notice.innerHTML='<strong>Compatibility view.</strong> New SNMP monitoring should be configured under Monitoring → Remote collectors. This page remains temporarily for existing Prometheus snmp_exporter target metadata and will be removed after migration.'; }
 
-async function applyEnhancements(){if(running||!root)return;running=true;try{ensureStyles();consolidateNavigation();ensureDomainTabs();const route=routeName();if(route==='notifications')await enhanceNotifications();else if(route==='maintenance')enhanceMaintenance();else if(route==='availability')enhanceAvailability();else if(route==='discovery')enhanceDiscovery();else if(route==='agentless')enhanceRemoteCollectors();else if(route==='snmp')enhanceLegacySnmp();}finally{running=false;}}
+async function applyEnhancements(){
+  if(running||!root)return;
+  running=true;
+  try{
+    ensureStyles();
+    consolidateNavigation();
+    ensureDomainTabs();
+    const route=routeName();
+    if(route==='overview') await enhanceDashboard();
+    else if(route==='hosts') enhanceAssets();
+    else if(route==='notifications') await enhanceNotifications();
+    else if(route==='maintenance') enhanceMaintenance();
+    else if(route==='availability') enhanceAvailability();
+    else if(route==='discovery') enhanceDiscovery();
+    else if(route==='agentless') enhanceRemoteCollectors();
+    else if(route==='snmp') enhanceLegacySnmp();
+  }finally{running=false;}
+}
 function scheduleEnhancement(){if(scheduled)return;scheduled=true;setTimeout(async()=>{scheduled=false;await applyEnhancements();},50);}
 if(root)new MutationObserver(()=>scheduleEnhancement()).observe(root,{childList:true,subtree:true});
 window.addEventListener('hashchange',scheduleEnhancement);window.addEventListener('load',scheduleEnhancement);scheduleEnhancement();
