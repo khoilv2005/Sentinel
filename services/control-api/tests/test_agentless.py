@@ -211,3 +211,58 @@ def test_entire_24_assigns_only_preexisting_assets_without_duplicates():
         db.commit()
     finally:
         db.close()
+
+
+def test_snmp_exporter_targets_can_derive_from_snmp_monitoring_assignment():
+    suffix = uuid.uuid4().hex[:8]
+    octet = int(suffix[:2], 16) % 200 + 20
+    ip_address = f"10.251.40.{octet}"
+    asset = _create_asset(ip_address, site=f"snmp-unified-{suffix}")
+
+    credential = client.post(
+        "/api/v1/credentials",
+        headers=ADMIN,
+        json={
+            "name": f"snmp-unified-{suffix}",
+            "credential_type": "snmp_v2",
+            "username": None,
+            "secret": "qa-community-not-returned",
+            "options": {
+                "exporter_auth": "public_v2",
+                "exporter_module": "if_mib",
+            },
+        },
+    )
+    assert credential.status_code == 200, credential.text
+    credential_id = credential.json()["id"]
+
+    assignment = client.post(
+        "/api/v1/monitoring/assignments/bulk",
+        headers=ADMIN,
+        json={
+            "method": "snmp",
+            "credential_id": credential_id,
+            "scope": "selected",
+            "targets": [ip_address],
+            "interval_seconds": 60,
+        },
+    )
+    assert assignment.status_code == 200, assignment.text
+    assert assignment.json()["created"] == 1
+
+    targets = client.get("/api/v1/targets/snmp")
+    assert targets.status_code == 200, targets.text
+    ours = [row for row in targets.json() if row["targets"] == [ip_address]]
+    assert len(ours) == 1
+    labels = ours[0]["labels"]
+    assert labels["source"] == "monitoring_assignment"
+    assert labels["snmp_module"] == "if_mib"
+    assert labels["snmp_auth"] == "public_v2"
+    assert labels["host_id"] == asset["id"]
+    assert "community" not in str(ours[0]).lower()
+
+    monitors = client.get("/api/v1/monitoring/assignments", headers=ADMIN).json()
+    monitor = next(row for row in monitors if row["credential_id"] == credential_id)
+    assert client.delete(f"/api/v1/monitoring/assignments/{monitor['id']}", headers=ADMIN).status_code == 200
+    assert client.delete(f"/api/v1/credentials/{credential_id}", headers=ADMIN).status_code == 200
+    assert client.delete(f"/api/v1/devices/{asset['id']}", headers=ADMIN).status_code == 200
