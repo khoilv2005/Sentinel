@@ -67,19 +67,23 @@ function ensureStyles() {
   document.head.appendChild(style);
 }
 
+function setText(node, text) {
+  if (node && node.textContent !== text) node.textContent = text;
+}
+
 function replacePanelCopy(heading, subtitle, noticeText = null) {
   for (const article of root.querySelectorAll('article.panel')) {
     const title = article.querySelector('h2');
     if (!title || title.textContent.trim() !== heading) continue;
     if (subtitle) {
       const subtitleNode = title.parentElement?.querySelector('p');
-      if (subtitleNode) subtitleNode.textContent = subtitle;
+      setText(subtitleNode, subtitle);
     }
     if (noticeText) {
       const notice = article.querySelector('.notice');
       if (notice) {
         notice.classList.remove('warning');
-        notice.textContent = noticeText;
+        setText(notice, noticeText);
       }
     }
   }
@@ -97,14 +101,22 @@ function addGroupTabs(route) {
   const group = ROUTE_GROUPS[route];
   const tabs = GROUP_TABS[group];
   if (!tabs || !root) return;
-  root.querySelector('.unified-subnav')?.remove();
-  const nav = document.createElement('nav');
-  nav.className = 'unified-subnav';
-  nav.setAttribute('aria-label', `${group} views`);
-  nav.innerHTML = tabs.map(([target, label]) =>
+
+  const html = tabs.map(([target, label]) =>
     `<a href="#${target}" class="${target === route || (route === 'host' && target === 'hosts') ? 'active' : ''}">${esc(label)}</a>`
   ).join('');
-  root.prepend(nav);
+
+  let nav = root.querySelector('.unified-subnav');
+  if (!nav) {
+    nav = document.createElement('nav');
+    nav.className = 'unified-subnav';
+    root.prepend(nav);
+  }
+  nav.setAttribute('aria-label', `${group} views`);
+  if (nav.dataset.group !== group || nav.innerHTML !== html) {
+    nav.dataset.group = group;
+    nav.innerHTML = html;
+  }
 }
 
 function renamePage(route) {
@@ -128,8 +140,8 @@ function renamePage(route) {
     audit: ['Audit', 'Administrative actions and configuration changes'],
   };
   if (!titles[route] || route === 'host') return;
-  if (title) title.textContent = titles[route][0];
-  if (subtitle) subtitle.textContent = titles[route][1];
+  setText(title, titles[route][0]);
+  setText(subtitle, titles[route][1]);
 }
 
 function enhanceAssets(route) {
@@ -139,13 +151,12 @@ function enhanceAssets(route) {
       const cells = row.querySelectorAll('td');
       if (cells.length < 7) continue;
       const stateText = cells[0].textContent.trim().toLowerCase();
-      const problemText = cells[6].textContent.trim();
-      const problems = Number.parseInt(problemText, 10);
+      const problems = Number.parseInt(cells[6].textContent.trim(), 10);
       if (stateText.includes('up') && Number.isFinite(problems) && problems > 0) {
         const badgeNode = cells[0].querySelector('.badge');
         if (badgeNode) {
           badgeNode.className = 'badge degraded';
-          badgeNode.textContent = 'degraded';
+          setText(badgeNode, 'degraded');
         }
       }
     }
@@ -153,7 +164,7 @@ function enhanceAssets(route) {
     replacePanelCopy(
       'Network discovery',
       'Find and enrich asset identity on authorized private networks',
-      'Discovery updates inventory metadata only. Runtime health is determined by configured monitoring methods such as Managed Agent, WinRM, SSH, SNMP or ICMP.'
+      'Discovery updates inventory metadata only. Runtime health is determined by configured Monitoring methods; a discovery miss does not mark an asset down.'
     );
   }
 }
@@ -176,6 +187,16 @@ function enhanceMonitoring(route) {
     if (subnav) subnav.insertAdjacentElement('afterend', note);
     else root.prepend(note);
   }
+}
+
+function deliverySignature(deliveries) {
+  return JSON.stringify(deliveries.map(delivery => [
+    delivery.id,
+    delivery.status,
+    delivery.attempts,
+    delivery.last_error,
+    delivery.created_at,
+  ]));
 }
 
 async function enhanceNotifications() {
@@ -218,10 +239,16 @@ async function enhanceNotifications() {
     cell.insertBefore(button, deleteButton);
   });
 
-  root.querySelector('#notification-delivery-panel')?.remove();
-  const panel = document.createElement('article');
-  panel.className = 'panel';
-  panel.id = 'notification-delivery-panel';
+  const signature = deliverySignature(deliveries);
+  let panel = root.querySelector('#notification-delivery-panel');
+  if (!panel) {
+    panel = document.createElement('article');
+    panel.className = 'panel';
+    panel.id = 'notification-delivery-panel';
+    root.appendChild(panel);
+  }
+  if (panel.dataset.signature === signature) return;
+
   const rows = deliveries.map(delivery => `
     <tr>
       <td>${badge(delivery.status)}</td>
@@ -232,9 +259,12 @@ async function enhanceNotifications() {
       <td class="delivery-error">${esc(delivery.last_error || '—')}</td>
       <td>${fmtDate(delivery.created_at)}</td>
     </tr>`).join('') || `<tr><td colspan="7">${empty('No notification deliveries yet.')}</td></tr>`;
+  panel.dataset.signature = signature;
   panel.innerHTML = `<div class="panel-head"><div><h2>Recent deliveries</h2><p>Last 50 queued, sent, suppressed or failed notifications</p></div><button class="button ghost small" id="refresh-deliveries" type="button">Refresh</button></div><div class="table-wrap"><table><thead><tr><th>Status</th><th>Transition</th><th>Severity</th><th>Channel ID</th><th>Attempts</th><th>Last error</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  root.appendChild(panel);
-  $('#refresh-deliveries')?.addEventListener('click', () => scheduleEnhancement());
+  panel.querySelector('#refresh-deliveries')?.addEventListener('click', () => {
+    panel.dataset.signature = '';
+    scheduleEnhancement();
+  });
 }
 
 function enhanceMaintenance() {
@@ -263,7 +293,7 @@ function enhanceMaintenance() {
 function enhanceAvailability() {
   for (const cell of root.querySelectorAll('td')) {
     if (cell.textContent.trim() === 'null%' || cell.textContent.trim() === 'undefined%') {
-      cell.textContent = '—';
+      setText(cell, '—');
     }
   }
 }
