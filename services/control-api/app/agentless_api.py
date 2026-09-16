@@ -14,7 +14,6 @@ from .collector_models import CollectorTelemetryLatest
 from .db import get_db
 from .models import AgentlessMonitor, AgentlessTelemetryLatest, AuditEvent, CredentialProfile, Device
 from .netutils import parse_private_network
-from .notification_api import router as notification_router
 from .secretbox import decrypt_secrets, encrypt_secrets
 from .security import control_identity, require_write
 
@@ -265,8 +264,6 @@ def create_monitors(
             select(Device).where(Device.ip_address == ip_value)
         ).scalar_one_or_none()
         if device is None:
-            # This is an explicit Add/Monitor operation, not discovery. The
-            # asset starts UNKNOWN until a monitoring method returns evidence.
             device = Device(
                 ip_address=ip_value,
                 first_seen=utcnow(),
@@ -335,7 +332,6 @@ def _monitor_out(row: AgentlessMonitor, db: Session) -> dict:
     credential = db.get(CredentialProfile, row.credential_id)
     telemetry = db.get(CollectorTelemetryLatest, row.id)
     if telemetry is None:
-        # Compatibility with pre-v0.4 rows until each assignment has polled.
         legacy = db.get(AgentlessTelemetryLatest, row.device_id)
         if legacy is not None and legacy.source == row.method:
             telemetry = legacy
@@ -432,6 +428,3 @@ def request_poll(
     row.enabled = True
     db.commit()
     return {"status": "queued", "id": monitor_id}
-
-
-router.include_router(notification_router)
