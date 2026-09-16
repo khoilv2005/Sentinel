@@ -53,6 +53,19 @@ An asset is not marked down because one monitoring method fails. Remote health i
 
 The target must permit WinRM from the SentinelView collector network and the supplied account must have permission to query CIM/performance data. SentinelView does not automatically weaken target-side WinRM policy.
 
+WinRM credential `options` can tune transport behavior for slower or higher-latency hosts. The defaults are a 30-second WS-Man operation timeout, a 45-second HTTP read timeout and one retry for a transient WS-Man operation timeout. Supported overrides are `operation_timeout_sec`, `read_timeout_sec` and `retries` (0–3); `read_timeout_sec` must be greater than `operation_timeout_sec`. For example:
+
+```json
+{
+  "transport": "ntlm",
+  "operation_timeout_sec": 45,
+  "read_timeout_sec": 60,
+  "retries": 1
+}
+```
+
+Authentication, authorization and other transport failures are not silently retried as operation timeouts.
+
 ## SSH host keys
 
 Strict host-key checking can be enabled with `{"strict_host_key": true}` in credential options. The default lab-friendly behavior accepts unknown host keys; production deployments should enable strict verification.
