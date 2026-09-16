@@ -31,18 +31,22 @@ POST /api/v1/auth/login
 GET  /api/v1/auth/me
 ```
 
-### Dashboard / assets
+### Dashboard / Assets
+
+Canonical monitored-asset endpoints:
 
 ```text
 GET /api/v1/ui/overview
-GET /api/v1/hosts
-GET /api/v1/hosts/{id}/overview
-GET /api/v1/hosts/{id}/metrics
+GET /api/v1/assets
+GET /api/v1/assets/{id}/overview
+GET /api/v1/assets/{id}/metrics
 GET /api/v1/services
 GET /api/v1/problems
 POST /api/v1/problems/{id}/ack
 GET /api/v1/search
 ```
+
+Older `/api/v1/hosts*` endpoints remain callable for compatibility but are hidden from OpenAPI. The first-party UI uses the canonical `/assets` aliases.
 
 ### Asset inventory / discovery
 
@@ -54,7 +58,7 @@ GET  /api/v1/discovery/scans
 GET  /api/v1/discovery/scans/{id}
 ```
 
-Discovery only enriches asset identity/inventory. Runtime health belongs to configured monitoring methods.
+`Device` remains the canonical inventory record during the v0.4 compatibility transition. Discovery only enriches asset identity/inventory; runtime health belongs to configured monitoring methods.
 
 ### Monitoring assignments
 
@@ -75,7 +79,7 @@ ssh
 snmp
 ```
 
-Legacy `/api/v1/agentless/*` routes remain compatibility aliases in v0.4 but are hidden from OpenAPI where possible.
+Legacy `/api/v1/agentless/*` routes remain compatibility aliases in v0.4 but are hidden from OpenAPI.
 
 ### Monitoring credentials
 
@@ -106,7 +110,7 @@ Managed Agent is one Monitoring method, not a prerequisite for asset monitoring.
 ### Alerting / operations
 
 ```text
-GET/POST    /api/v1/rules
+GET/POST     /api/v1/rules
 PATCH/DELETE /api/v1/rules/{id}
 GET          /api/v1/events
 GET/POST     /api/v1/topology
@@ -148,3 +152,7 @@ GET /api/v1/targets/blackbox
 ```
 
 These endpoints are backend service-discovery interfaces consumed by Prometheus/exporters. They are intentionally separate from operator-facing Monitoring configuration.
+
+## Route hygiene
+
+The v0.4 entrypoint keeps legacy implementation code isolated while duplicate route registrations are removed at import time. Regression tests ensure each HTTP method/path pair is unique and that notification/maintenance requests resolve to the modular encrypted/maintenance-aware implementations.
