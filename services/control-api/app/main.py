@@ -1,10 +1,10 @@
 """SentinelView Control API entrypoint.
 
 The v0.4 consolidation keeps the existing control-plane implementation in
-``legacy_main`` temporarily while duplicate product endpoints are moved into
-modular routers. Importing the legacy module preserves compatibility; this
-entrypoint then removes duplicate method/path registrations so each API action
-has one effective route.
+``legacy_main`` temporarily while product endpoints move into focused routers.
+This entrypoint preserves backward compatibility while making route ownership
+explicit and preventing stale inline handlers from competing with maintained
+modular implementations.
 
 New development should add focused routers/modules instead of growing the
 legacy monolith further.
@@ -14,69 +14,65 @@ from fastapi.routing import APIRoute
 
 from . import legacy_main as _legacy
 from .legacy_main import *  # noqa: F401,F403 - compatibility re-export
+from .notification_api import router as notification_router
 
 # Explicit re-exports used by tests and uvicorn.
 app = _legacy.app
 ensure_bootstrap_data = _legacy.ensure_bootstrap_data
 
 
-def _route_priority(route: APIRoute) -> int:
-    """Prefer focused v0.4 routers over equivalent legacy inline handlers."""
-    module = getattr(route.endpoint, "__module__", "")
-    if module.startswith((
-        "app.notification_api",
-        "app.maintenance_api",
-        "app.agentless_api",
-    )):
-        return 100
-    if module.startswith("app.legacy_main"):
-        return 0
-    return 50
-
-
 def _deduplicate_api_routes() -> int:
-    """Keep one effective registration for every HTTP method/path pair.
+    """Keep one registration for every HTTP method/path pair.
 
-    The legacy control plane still contains inline notification and maintenance
-    handlers while the v0.4 modular routers expose the maintained versions.
-    Route order is not a reliable ownership signal, so duplicates are resolved
-    explicitly by endpoint-module priority while preserving the first position
-    of each method/path pair in the router list.
+    This generic pass removes accidental duplicate registrations. Operations
+    routes that have both legacy and modular implementations are re-installed
+    explicitly by ``_install_modular_operations_routes`` below, so this pass
+    does not need to infer ownership from route ordering.
     """
-    original = list(app.router.routes)
-    best: dict[tuple[str, tuple[str, ...]], APIRoute] = {}
+    unique_routes = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     removed = 0
 
-    for route in original:
-        if not isinstance(route, APIRoute):
-            continue
-        key = (route.path, tuple(sorted(route.methods or ())))
-        current = best.get(key)
-        if current is None:
-            best[key] = route
-            continue
-        removed += 1
-        if _route_priority(route) > _route_priority(current):
-            best[key] = route
+    for route in app.router.routes:
+        if isinstance(route, APIRoute):
+            key = (route.path, tuple(sorted(route.methods or ())))
+            if key in seen:
+                removed += 1
+                continue
+            seen.add(key)
+        unique_routes.append(route)
 
-    if not removed:
-        return 0
-
-    unique_routes = []
-    emitted: set[tuple[str, tuple[str, ...]]] = set()
-    for route in original:
-        if not isinstance(route, APIRoute):
-            unique_routes.append(route)
-            continue
-        key = (route.path, tuple(sorted(route.methods or ())))
-        if key in emitted:
-            continue
-        emitted.add(key)
-        unique_routes.append(best[key])
-
-    app.router.routes[:] = unique_routes
-    _legacy.logger.info("removed %s duplicate API route registration(s)", removed)
+    if removed:
+        app.router.routes[:] = unique_routes
+        _legacy.logger.info("removed %s duplicate API route registration(s)", removed)
     return removed
+
+
+_MODULAR_OPERATIONS_PATHS = {
+    "/api/v1/notification-channels",
+    "/api/v1/notification-channels/{channel_id}",
+    "/api/v1/notification-channels/{channel_id}/test",
+    "/api/v1/notification-deliveries",
+    "/api/v1/maintenance",
+    "/api/v1/maintenance/{window_id}",
+    "/api/v1/availability",
+}
+
+
+def _install_modular_operations_routes() -> None:
+    """Make modular notification/maintenance implementations authoritative.
+
+    ``legacy_main`` still contains historical inline handlers during the v0.4
+    migration. Remove every registration for the migrated operations paths and
+    include the maintained notification router once. That router already
+    includes the maintenance/availability router.
+    """
+    app.router.routes[:] = [
+        route
+        for route in app.router.routes
+        if not (isinstance(route, APIRoute) and route.path in _MODULAR_OPERATIONS_PATHS)
+    ]
+    app.include_router(notification_router, prefix="/api/v1")
 
 
 def _install_asset_aliases() -> None:
@@ -116,4 +112,6 @@ def _install_asset_aliases() -> None:
 
 
 _deduplicate_api_routes()
+_install_modular_operations_routes()
 _install_asset_aliases()
+_deduplicate_api_routes()
