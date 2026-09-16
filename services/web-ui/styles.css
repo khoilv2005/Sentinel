@@ -154,6 +154,8 @@ label { display: grid; gap: 5px; color: #8ea2b2; font-size: 10px; font-weight: 6
 .form-row { display: flex; gap: 9px; align-items: end; flex-wrap: wrap; }
 .form-row > label { flex: 1; min-width: 150px; }
 .form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.field-inline { display: flex; gap: 6px; align-items: center; }
+.field-inline select { flex: 1; min-width: 0; }
 .form-help { color: #718899; font-size: 9px; line-height: 1.5; }
 .form-error { min-height: 16px; color: #ff8f9a; font-size: 10px; }
 .checkbox-row { display: flex; gap: 8px; align-items: center; }

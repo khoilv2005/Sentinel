@@ -69,6 +69,7 @@ export function openModal(title, subtitle, html) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-subtitle').textContent = subtitle || '';
   document.getElementById('modal-body').innerHTML = html;
+  dialog.querySelector('[aria-label="Close"]').onclick = closeModal;
   dialog.showModal();
   return dialog;
 }
