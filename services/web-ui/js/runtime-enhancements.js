@@ -6,7 +6,7 @@ let scheduled = false;
 let running = false;
 
 const DOMAIN_GROUPS = {
-  assets: { parent: 'hosts', title: 'Assets', routes: [['hosts','All assets'],['services','Services'],['topology','Topology'],['discovery','Discover'],['devices','Inventory details']] },
+  assets: { parent: 'hosts', title: 'Assets', routes: [['hosts','All assets'],['services','Services'],['topology','Topology'],['discovery','Discover']] },
   monitoring: { parent: 'agents', title: 'Monitoring', routes: [['agents','Managed agent'],['agentless','Remote collectors'],['credentials','Credentials'],['policies','Agent settings']] },
   alerts: { parent: 'rules', title: 'Alerts', routes: [['rules','Rules'],['notifications','Notifications'],['maintenance','Maintenance']] },
   settings: { parent: 'settings', title: 'Settings', routes: [['settings','Platform'],['integrations','Capabilities'],['snmp','Legacy SNMP exporter']] },
@@ -14,7 +14,9 @@ const DOMAIN_GROUPS = {
 
 const ROUTE_TO_DOMAIN = Object.fromEntries(Object.entries(DOMAIN_GROUPS).flatMap(([key, group]) => group.routes.map(([route]) => [route, { key, ...group }])));
 
-function routeName() { return (location.hash || '#overview').slice(1).split('/')[0]; }
+function routeParts() { return (location.hash || '#overview').slice(1).split('/'); }
+function routeName() { return routeParts()[0]; }
+function routeArg() { return routeParts()[1] || null; }
 function navItem(route) { return document.querySelector(`.nav-item[data-route="${route}"]`); }
 function setNavLabel(route, text) { const label = navItem(route)?.querySelector('span:nth-child(2)'); if (label) label.textContent = text; }
 
@@ -28,7 +30,7 @@ function consolidateNavigation() {
   setNavLabel('audit','Audit');
   ['services','topology','discovery','devices','agentless','policies','credentials','snmp','integrations','notifications','maintenance'].forEach(route => navItem(route)?.classList.add('hidden'));
   const route = routeName();
-  const domain = ROUTE_TO_DOMAIN[route];
+  const domain = ROUTE_TO_DOMAIN[route] || (route === 'host' ? DOMAIN_GROUPS.assets : null);
   if (domain) {
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
     navItem(domain.parent)?.classList.add('active');
@@ -39,7 +41,7 @@ function ensureStyles() {
   if (document.getElementById('sentinel-runtime-enhancement-style')) return;
   const style = document.createElement('style');
   style.id = 'sentinel-runtime-enhancement-style';
-  style.textContent = '.badge.suppressed{background:#202936;border-color:#41526a;color:#a9c5e8}.badge.degraded{background:#312713;border-color:#5a4820;color:#f4c96d}.state-dot.degraded{background:var(--yellow)}.delivery-error{max-width:420px;white-space:normal;overflow-wrap:anywhere}.domain-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;margin-bottom:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel,#111827)}.domain-tab{display:inline-flex;align-items:center;padding:7px 10px;border-radius:7px;text-decoration:none;color:inherit;border:1px solid transparent;font-size:13px;font-weight:600}.domain-tab:hover{border-color:var(--border)}.domain-tab.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.35);color:#bfdbfe}';
+  style.textContent = '.badge.suppressed{background:#202936;border-color:#41526a;color:#a9c5e8}.badge.degraded{background:#312713;border-color:#5a4820;color:#f4c96d}.state-dot.degraded{background:var(--yellow)}.delivery-error{max-width:420px;white-space:normal;overflow-wrap:anywhere}.domain-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;margin-bottom:14px;border:1px solid var(--border);border-radius:10px;background:var(--panel,#111827)}.domain-tab{display:inline-flex;align-items:center;padding:7px 10px;border-radius:7px;text-decoration:none;color:inherit;border:1px solid transparent;font-size:13px;font-weight:600}.domain-tab:hover{border-color:var(--border)}.domain-tab.active{background:rgba(96,165,250,.12);border-color:rgba(96,165,250,.35);color:#bfdbfe}.monitoring-methods{display:flex;gap:4px;flex-wrap:wrap}.asset-identity-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.asset-identity-item{padding:10px;border:1px solid var(--border-soft);border-radius:7px;background:var(--panel-2)}.asset-identity-item span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.5px}.asset-identity-item strong{display:block;margin-top:4px;font-size:11px;overflow-wrap:anywhere}@media(max-width:900px){.asset-identity-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}';
   document.head.appendChild(style);
 }
 
@@ -97,7 +99,7 @@ async function enhanceDashboard() {
   }
 }
 
-function enhanceAssets() {
+async function enhanceAssets() {
   const stateFilter = $('#hosts-state');
   if (stateFilter && !stateFilter.querySelector('option[value="degraded"]')) {
     const option = document.createElement('option');
@@ -109,6 +111,66 @@ function enhanceAssets() {
   if (panelTitle?.textContent.trim() === 'Hosts') panelTitle.textContent = 'Assets';
   const monitoredCopy = root.querySelector('.panel-head p');
   if (monitoredCopy?.textContent.includes('monitored assets')) monitoredCopy.textContent = monitoredCopy.textContent.replace('monitored assets','infrastructure assets');
+
+  const headers = [...root.querySelectorAll('thead th')];
+  const monitoringIndex = headers.findIndex(header => header.textContent.trim() === 'Agent');
+  if (monitoringIndex >= 0) headers[monitoringIndex].textContent = 'Monitoring';
+  if (monitoringIndex < 0) return;
+
+  try {
+    const assignments = await api('/api/v1/monitoring/assignments');
+    const methodsByDevice = new Map();
+    for (const assignment of assignments) {
+      if (!assignment.enabled) continue;
+      if (!methodsByDevice.has(assignment.device_id)) methodsByDevice.set(assignment.device_id, []);
+      methodsByDevice.get(assignment.device_id).push(assignment);
+    }
+    for (const row of root.querySelectorAll('tbody tr[data-host-id]')) {
+      const cell = row.children[monitoringIndex];
+      if (!cell) continue;
+      const remote = methodsByDevice.get(row.dataset.hostId) || [];
+      const existing = cell.textContent.trim().toLowerCase() === 'none' ? '' : cell.innerHTML;
+      const remoteBadges = remote.map(item => {
+        const unhealthy = item.last_error && Number(item.consecutive_failures || 0) >= 3;
+        const label = item.method.toUpperCase();
+        return badge(unhealthy ? 'critical' : item.last_success_at ? 'up' : 'unknown', label);
+      }).join(' ');
+      cell.innerHTML = `<div class="monitoring-methods">${existing}${existing && remoteBadges ? ' ' : ''}${remoteBadges || (!existing ? badge('unknown','unmonitored') : '')}</div>`;
+    }
+  } catch (error) {
+    console.warn('Could not enhance Asset monitoring methods', error);
+  }
+}
+
+async function enhanceAssetDetail() {
+  const id = routeArg();
+  if (!id || document.getElementById('asset-identity-panel')) return;
+  try {
+    const [device, assignments] = await Promise.all([
+      api(`/api/v1/devices/${encodeURIComponent(id)}`),
+      api('/api/v1/monitoring/assignments').catch(() => []),
+    ]);
+    const methods = assignments.filter(item => item.device_id === id && item.enabled);
+    const panel = document.createElement('article');
+    panel.className = 'panel';
+    panel.id = 'asset-identity-panel';
+    const identity = [
+      ['IP address', device.ip_address || '—'],
+      ['MAC address', device.mac_address || '—'],
+      ['Vendor', device.vendor || '—'],
+      ['Model', device.model || '—'],
+      ['Type', device.device_class || 'unknown'],
+      ['OS', device.os_name || '—'],
+      ['Site', device.site || 'default'],
+      ['Open ports', (device.open_ports || []).join(', ') || '—'],
+    ];
+    panel.innerHTML = `<div class="panel-head"><div><h2>Asset identity</h2><p>Inventory and monitoring configuration in one asset view</p></div><div class="monitoring-methods">${methods.map(item=>badge(item.last_error&&Number(item.consecutive_failures||0)>=3?'critical':item.last_success_at?'up':'unknown',item.method.toUpperCase())).join(' ')||badge('unknown','no remote collector')}</div></div><div class="panel-body"><div class="asset-identity-grid">${identity.map(([label,value])=>`<div class="asset-identity-item"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('')}</div></div>`;
+    root.appendChild(panel);
+    const title = $('#page-title');
+    if (title && title.textContent === 'Host') title.textContent = 'Asset';
+  } catch (error) {
+    console.warn('Could not enhance Asset detail', error);
+  }
 }
 
 async function enhanceNotifications() {
@@ -156,7 +218,8 @@ async function applyEnhancements(){
     ensureDomainTabs();
     const route=routeName();
     if(route==='overview') await enhanceDashboard();
-    else if(route==='hosts') enhanceAssets();
+    else if(route==='hosts') await enhanceAssets();
+    else if(route==='host') await enhanceAssetDetail();
     else if(route==='notifications') await enhanceNotifications();
     else if(route==='maintenance') enhanceMaintenance();
     else if(route==='availability') enhanceAvailability();
