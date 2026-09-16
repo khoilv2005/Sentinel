@@ -4,7 +4,7 @@ import ipaddress
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from .notification_api import router as notification_router
 from .secretbox import decrypt_secrets, encrypt_secrets
 from .security import control_identity, require_write
 
-router = APIRouter(prefix="/api/v1", tags=["agentless-monitoring"])
+router = APIRouter(prefix="/api/v1", tags=["monitoring"])
 
 
 def utcnow() -> datetime:
@@ -106,8 +106,29 @@ def _private_ip(value: str) -> str:
     except ValueError as exc:
         raise HTTPException(400, f"invalid IP address: {value}") from exc
     if not (ip.is_private or ip.is_link_local or ip.is_loopback):
-        raise HTTPException(400, "agentless monitoring is limited to private/link-local targets")
+        raise HTTPException(400, "monitoring is limited to private/link-local targets")
     return str(ip)
+
+
+def _in_network(ip_value: str, net) -> bool:
+    try:
+        return ipaddress.ip_address(ip_value) in net
+    except ValueError:
+        return False
+
+
+def _device_map(db: Session) -> dict[str, Device]:
+    return {row.ip_address: row for row in db.execute(select(Device)).scalars()}
+
+
+def _ensure_inventory_targets(db: Session, targets: list[str]) -> list[str]:
+    devices = _device_map(db)
+    missing = [target for target in targets if target not in devices]
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = "" if len(missing) <= 5 else f" (+{len(missing) - 5} more)"
+        raise HTTPException(409, f"monitoring can only be assigned to existing assets; add or discover first: {preview}{suffix}")
+    return targets
 
 
 @router.get("/credentials")
@@ -127,9 +148,11 @@ def create_credential(payload: CredentialCreate, identity: dict = Depends(requir
         options_json=payload.options,
         enabled=True,
     )
-    db.add(row); db.flush()
+    db.add(row)
+    db.flush()
     _audit(db, identity["username"], "create", "credential", row.id, f"Created credential profile {row.name}", {"type": row.credential_type})
-    db.commit(); db.refresh(row)
+    db.commit()
+    db.refresh(row)
     return _credential_out(row)
 
 
@@ -147,7 +170,8 @@ def delete_credential(credential_id: str, identity: dict = Depends(require_write
     return {"deleted": credential_id}
 
 
-@router.get("/agentless/candidates")
+@router.get("/agentless/candidates", deprecated=True)
+@router.get("/monitoring/candidates")
 def list_candidates(cidr: str, identity: dict = Depends(control_identity), db: Session = Depends(get_db)):
     try:
         net = parse_private_network(cidr)
@@ -163,30 +187,31 @@ def list_candidates(cidr: str, identity: dict = Depends(control_identity), db: S
     } for ip in net.hosts()]
 
 
-def _in_network(ip_value: str, net) -> bool:
-    try:
-        return ipaddress.ip_address(ip_value) in net
-    except ValueError:
-        return False
-
-
 def _targets_for_request(payload: BulkMonitorCreate, db: Session) -> list[str]:
+    """Resolve monitoring targets without creating inventory implicitly."""
     if payload.scope == "selected":
         if not payload.targets:
             raise HTTPException(400, "select at least one target")
-        return list(dict.fromkeys(_private_ip(value) for value in payload.targets))
+        selected = list(dict.fromkeys(_private_ip(value) for value in payload.targets))
+        return _ensure_inventory_targets(db, selected)
     if not payload.cidr:
         raise HTTPException(400, "CIDR is required for this scope")
     try:
         net = parse_private_network(payload.cidr)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    if payload.scope == "cidr_all":
-        return [str(ip) for ip in net.hosts()]
-    return [d.ip_address for d in db.execute(select(Device)).scalars() if _in_network(d.ip_address, net)]
+    devices = [d for d in db.execute(select(Device)).scalars() if _in_network(d.ip_address, net)]
+    if payload.scope == "discovered":
+        targets = [d.ip_address for d in devices if d.last_seen is not None]
+    else:
+        targets = [d.ip_address for d in devices]
+    if not targets:
+        raise HTTPException(409, "no existing assets match this scope; discover the network or add assets first")
+    return targets
 
 
-@router.post("/agentless/monitors/bulk")
+@router.post("/agentless/monitors/bulk", deprecated=True)
+@router.post("/monitoring/assignments/bulk")
 def create_monitors(payload: BulkMonitorCreate, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
     credential = db.get(CredentialProfile, payload.credential_id)
     if credential is None or not credential.enabled:
@@ -198,26 +223,35 @@ def create_monitors(payload: BulkMonitorCreate, identity: dict = Depends(require
     for ip_value in targets:
         device = db.execute(select(Device).where(Device.ip_address == ip_value)).scalar_one_or_none()
         if device is None:
-            device = Device(ip_address=ip_value, first_seen=utcnow(), state="unknown", device_class="unknown", site=payload.site)
-            db.add(device); db.flush()
-        elif payload.site and not device.site:
+            raise HTTPException(409, f"asset {ip_value} is not in inventory")
+        if payload.site and not device.site:
             device.site = payload.site
         monitor = db.execute(select(AgentlessMonitor).where(AgentlessMonitor.device_id == device.id, AgentlessMonitor.method == payload.method)).scalar_one_or_none()
         if monitor is None:
             monitor = AgentlessMonitor(
-                device_id=device.id, method=payload.method, credential_id=credential.id,
-                interval_seconds=payload.interval_seconds, enabled=True,
+                device_id=device.id,
+                method=payload.method,
+                credential_id=credential.id,
+                interval_seconds=payload.interval_seconds,
+                enabled=True,
             )
-            db.add(monitor); created += 1
+            db.add(monitor)
+            created += 1
         else:
             monitor.credential_id = credential.id
             monitor.interval_seconds = payload.interval_seconds
             monitor.enabled = True
             monitor.last_error = None
             updated += 1
-    _audit(db, identity["username"], "bulk_enable", "agentless_monitor", None,
-           f"Enabled {payload.method} monitoring for {len(targets)} target(s)",
-           {"scope": payload.scope, "cidr": payload.cidr, "created": created, "updated": updated})
+    _audit(
+        db,
+        identity["username"],
+        "bulk_enable",
+        "monitoring_assignment",
+        None,
+        f"Enabled {payload.method} monitoring for {len(targets)} asset(s)",
+        {"scope": payload.scope, "cidr": payload.cidr, "created": created, "updated": updated, "inventory_only": True},
+    )
     db.commit()
     return {"targets": len(targets), "created": created, "updated": updated}
 
@@ -254,26 +288,30 @@ def _monitor_out(row: AgentlessMonitor, db: Session) -> dict:
     }
 
 
-@router.get("/agentless/monitors")
+@router.get("/agentless/monitors", deprecated=True)
+@router.get("/monitoring/assignments")
 def list_monitors(identity: dict = Depends(control_identity), db: Session = Depends(get_db)):
     rows = list(db.execute(select(AgentlessMonitor).order_by(AgentlessMonitor.created_at.desc())).scalars())
     return [_monitor_out(row, db) for row in rows]
 
 
-@router.delete("/agentless/monitors/{monitor_id}")
+@router.delete("/agentless/monitors/{monitor_id}", deprecated=True)
+@router.delete("/monitoring/assignments/{monitor_id}")
 def delete_monitor(monitor_id: str, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
     row = db.get(AgentlessMonitor, monitor_id)
     if row is None:
         raise HTTPException(404, "monitor not found")
     db.delete(row)
-    _audit(db, identity["username"], "delete", "agentless_monitor", monitor_id, "Deleted agentless monitor")
+    _audit(db, identity["username"], "delete", "monitoring_assignment", monitor_id, "Deleted monitoring assignment")
     db.commit()
     return {"deleted": monitor_id}
 
 
-@router.post("/agentless/test")
+@router.post("/agentless/test", deprecated=True)
+@router.post("/monitoring/test")
 def test_monitor(payload: MonitorTest, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
     target = _private_ip(payload.target)
+    _ensure_inventory_targets(db, [target])
     credential = db.get(CredentialProfile, payload.credential_id)
     if credential is None or not credential.enabled:
         raise HTTPException(404, "credential profile not found or disabled")
@@ -285,7 +323,8 @@ def test_monitor(payload: MonitorTest, identity: dict = Depends(require_write), 
     return {"status": "ok", "target": target, "method": payload.method, "sample": data}
 
 
-@router.post("/agentless/monitors/{monitor_id}/poll")
+@router.post("/agentless/monitors/{monitor_id}/poll", deprecated=True)
+@router.post("/monitoring/assignments/{monitor_id}/poll")
 def request_poll(monitor_id: str, identity: dict = Depends(require_write), db: Session = Depends(get_db)):
     row = db.get(AgentlessMonitor, monitor_id)
     if row is None:

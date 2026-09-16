@@ -1,37 +1,12 @@
-# SentinelView v0.3.0 API Overview
+# SentinelView v0.4 API Overview
 
-Interactive OpenAPI documentation:
-
-```text
-http://localhost:8080/docs
-```
+Interactive OpenAPI documentation: `http://localhost:8080/docs`
 
 ## Authentication
 
-UI sessions:
+UI sessions use `Authorization: Bearer <signed-ui-session>`. Automation uses `X-API-Key`. Managed agents use their own bearer credential for check-in/telemetry.
 
-```http
-Authorization: Bearer <signed-ui-session>
-```
-
-Automation:
-
-```http
-X-API-Key: <SENTINEL_API_KEY>
-```
-
-Managed agents use their own bearer credential only for agent check-in/telemetry endpoints.
-
-## Major endpoint groups
-
-### Authentication
-
-```text
-POST /api/v1/auth/login
-GET  /api/v1/auth/me
-```
-
-### First-party UI
+## First-party UI
 
 ```text
 GET /api/v1/ui/overview
@@ -44,7 +19,7 @@ POST /api/v1/problems/{id}/ack
 GET /api/v1/search
 ```
 
-### Inventory/discovery
+## Assets / discovery
 
 ```text
 GET/POST /api/v1/devices
@@ -54,7 +29,30 @@ GET  /api/v1/discovery/scans
 GET  /api/v1/discovery/scans/{id}
 ```
 
-### Managed agents
+Discovery is inventory-only: it may create/enrich Assets and observation history, but it does not own operational up/down health.
+
+## Monitoring assignments
+
+```text
+GET    /api/v1/monitoring/candidates
+GET    /api/v1/monitoring/assignments
+POST   /api/v1/monitoring/assignments/bulk
+DELETE /api/v1/monitoring/assignments/{id}
+POST   /api/v1/monitoring/assignments/{id}/poll
+POST   /api/v1/monitoring/test
+```
+
+Remote methods currently include WinRM, SSH and SNMP. Assignment requires the target to exist as an Asset first. The v0.3 `/api/v1/agentless/*` endpoints remain temporarily and are deprecated in OpenAPI.
+
+## Credentials
+
+```text
+GET    /api/v1/credentials
+POST   /api/v1/credentials
+DELETE /api/v1/credentials/{id}
+```
+
+## Managed agents
 
 ```text
 GET/POST /api/v1/agent-policies
@@ -68,7 +66,7 @@ GET      /api/v1/agents
 POST     /api/v1/agents/{id}/revoke
 ```
 
-### Monitoring/configuration
+## Monitoring / configuration
 
 ```text
 GET/POST /api/v1/rules
@@ -79,7 +77,7 @@ GET       /api/v1/topology/graph
 GET       /api/v1/integrations
 ```
 
-### Platform/reporting
+## Platform / reporting
 
 ```text
 GET/POST /api/v1/notification-channels
@@ -93,12 +91,10 @@ PATCH    /api/v1/users/{id}
 GET      /api/v1/platform/settings
 ```
 
-### Prometheus service discovery
+## Prometheus service discovery
 
 ```text
 GET /api/v1/targets/prometheus
 GET /api/v1/targets/snmp
 GET /api/v1/targets/blackbox
 ```
-
-These endpoints are consumed by Prometheus/collectors and are intentionally separate from normal UI endpoints.
