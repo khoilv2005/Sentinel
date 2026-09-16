@@ -10,12 +10,14 @@ from sqlalchemy import select
 from .agentless_collectors import collect_target
 from .config import settings
 from .db import Base, SessionLocal, engine
-from .models import AgentlessMonitor, AgentlessTelemetryLatest, CredentialProfile, Device, Event
+from .models import AgentlessMonitor, CredentialProfile, Device, Event
 from .monitoring import sync_problems
+from .monitoring_models import MonitoringTelemetryLatest  # noqa: F401 - registers table metadata
+from .monitoring_telemetry import refresh_device_compat_telemetry, write_assignment_telemetry
 from .secretbox import decrypt_secrets
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
-log = logging.getLogger("sentinel-agentless")
+log = logging.getLogger("sentinel-collector")
 Base.metadata.create_all(bind=engine)
 
 
@@ -45,8 +47,14 @@ def poll_monitor(monitor_id: str):
         if device is None or credential is None or not credential.enabled:
             monitor.last_poll_at = utcnow()
             monitor.last_error = "device or credential is unavailable"
+            monitor.consecutive_failures = int(monitor.consecutive_failures or 0) + 1
             db.commit()
+            if device is not None:
+                refresh_device_compat_telemetry(db, device.id)
+                db.commit()
+                sync_problems(db)
             return
+
         monitor.last_poll_at = utcnow()
         db.commit()
         try:
@@ -58,23 +66,9 @@ def poll_monitor(monitor_id: str):
                 credential.options_json or {},
             )
             now = utcnow()
-            telemetry = db.get(AgentlessTelemetryLatest, device.id)
-            if telemetry is None:
-                telemetry = AgentlessTelemetryLatest(device_id=device.id)
-                db.add(telemetry)
-            telemetry.source = monitor.method
-            telemetry.collected_at = now
-            telemetry.cpu_usage_percent = result.get("cpu_usage_percent")
-            telemetry.memory_total_bytes = result.get("memory_total_bytes")
-            telemetry.memory_used_bytes = result.get("memory_used_bytes")
-            telemetry.memory_usage_percent = result.get("memory_usage_percent")
-            telemetry.uptime_seconds = result.get("uptime_seconds")
-            telemetry.process_count = result.get("process_count")
-            telemetry.disks = result.get("disks") or []
-            telemetry.interfaces = result.get("interfaces") or []
-            telemetry.raw = result.get("raw") or {}
-            previous_state = device.state
-            device.state = "up"
+
+            write_assignment_telemetry(db, monitor, result, now)
+
             device.last_seen = now
             if result.get("hostname"):
                 device.hostname = str(result["hostname"])[:255]
@@ -84,16 +78,21 @@ def poll_monitor(monitor_id: str):
                 device.device_class = "windows"
             elif monitor.method == "ssh" and device.device_class in {None, "unknown"}:
                 device.device_class = "server"
+
             monitor.last_success_at = now
             monitor.last_error = None
             monitor.consecutive_failures = 0
-            if previous_state != "up":
-                db.add(Event(device_id=device.id, severity="info", event_type="state_change",
-                             message=f"{device.hostname or device.ip_address}: {previous_state} -> up",
-                             details={"from": previous_state, "to": "up", "source": monitor.method}))
-            db.add(Event(device_id=device.id, severity="info", event_type="agentless_poll",
-                         message=f"Collected {monitor.method} telemetry from {device.hostname or device.ip_address}",
-                         details={"method": monitor.method}))
+
+            refresh_device_compat_telemetry(db, device.id, now=now)
+            db.add(
+                Event(
+                    device_id=device.id,
+                    severity="info",
+                    event_type="monitoring_poll",
+                    message=f"Collected {monitor.method} telemetry from {device.hostname or device.ip_address}",
+                    details={"method": monitor.method, "assignment_id": monitor.id},
+                )
+            )
             db.commit()
             sync_problems(db)
         except Exception as exc:
@@ -105,30 +104,34 @@ def poll_monitor(monitor_id: str):
             monitor.last_poll_at = now
             monitor.last_error = str(exc)[:2000]
             monitor.consecutive_failures = int(monitor.consecutive_failures or 0) + 1
-            if device is not None and monitor.consecutive_failures >= 3:
-                previous_state = device.state
-                device.state = "down"
-                if previous_state != "down":
-                    db.add(Event(device_id=device.id, severity="critical", event_type="state_change",
-                                 message=f"{device.hostname or device.ip_address}: {previous_state} -> down",
-                                 details={"from": previous_state, "to": "down", "source": monitor.method, "error": monitor.last_error}))
+            if device is not None:
+                refresh_device_compat_telemetry(db, device.id, now=now)
             db.commit()
             sync_problems(db)
-            log.warning("%s poll failed for %s: %s", monitor.method, device.ip_address if device else monitor.device_id, exc)
+            log.warning(
+                "%s poll failed for %s: %s",
+                monitor.method,
+                device.ip_address if device else monitor.device_id,
+                exc,
+            )
     finally:
         db.close()
 
 
 def loop():
-    workers = max(1, min(64, int(settings.agentless_workers)))
-    log.info("SentinelView agentless worker started with %s poll workers", workers)
-    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="agentless")
+    workers = max(1, min(64, int(settings.collector_workers)))
+    log.info("SentinelView collector worker started with %s poll workers", workers)
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="collector")
     try:
         while True:
             db = SessionLocal()
             try:
                 now = utcnow()
-                rows = list(db.execute(select(AgentlessMonitor).where(AgentlessMonitor.enabled.is_(True))).scalars())
+                rows = list(
+                    db.execute(
+                        select(AgentlessMonitor).where(AgentlessMonitor.enabled.is_(True))
+                    ).scalars()
+                )
                 due = [row.id for row in rows if _due(row, now)]
             finally:
                 db.close()

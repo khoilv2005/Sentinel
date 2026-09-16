@@ -18,7 +18,7 @@ Expected core services:
 postgres
 control-api
 discovery-worker
-agentless-worker
+collector-worker
 notification-worker
 web-ui
 prometheus
@@ -35,7 +35,7 @@ Loki starts only when its Compose profile is enabled.
 docker compose logs -f --tail=200
 docker compose logs -f control-api
 docker compose logs -f discovery-worker
-docker compose logs -f agentless-worker
+docker compose logs -f collector-worker
 docker compose logs -f notification-worker
 docker compose logs -f web-ui
 ```
@@ -81,7 +81,9 @@ Do not use `-v` merely to apply a credential/configuration change.
 
 Open `http://localhost:9090/targets`.
 
-Managed agents are not directly scraped. Their metrics appear under the `sentinel-control` scrape because agents push to the Control API first. Agentless telemetry is also republished from the central Control API metrics endpoint.
+Managed agents are not directly scraped. Their metrics appear under the `sentinel-control` scrape because agents push to the Control API first. Remote collector telemetry is also republished from the central Control API metrics endpoint.
+
+Prometheus no longer owns a second set of SentinelView alert thresholds. Monitoring Rules in the Control API are the alert source of truth; Prometheus stores/querys time-series history and remains available to Grafana.
 
 ## Discovery troubleshooting
 
@@ -89,15 +91,17 @@ Managed agents are not directly scraped. Their metrics appear under the `sentine
 docker compose logs -f discovery-worker
 ```
 
+Discovery is inventory-only in v0.4. It records observed Assets and identity metadata but does not mark an Asset down simply because a later scan receives no response. Operational health comes from configured monitoring methods.
+
 Docker Desktop networking can limit L2 information such as MAC discovery compared with running collectors directly on the management network.
 
-## Agentless troubleshooting
+## Remote collector troubleshooting
 
 ```bash
-docker compose logs -f agentless-worker
+docker compose logs -f collector-worker
 ```
 
-Check the monitor in **Manage -> Agentless** for:
+Open **Monitoring -> Remote collectors** and inspect:
 
 ```text
 last_poll_at
@@ -106,9 +110,24 @@ last_error
 consecutive_failures
 ```
 
-Three consecutive failures can transition an assigned target down. A successful poll resets the failure count, clears `last_error`, updates `last_success_at` and returns the device to up state.
+A remote monitoring assignment is considered unavailable after three consecutive failures. Overall Asset health is derived from all configured monitoring methods:
+
+```text
+UP        at least one healthy method and no failed method
+DEGRADED  healthy and failed methods exist together
+DOWN      configured methods are failed with no healthy method
+UNKNOWN   no usable monitoring result yet
+```
+
+A successful poll resets the assignment failure count and clears `last_error`. One failed collector no longer overwrites data or health supplied by another active method.
 
 For WinRM, verify that the target allows the selected transport and that the supplied account may query CIM. For SSH, verify the account and host-key policy. For SNMP, verify v2c/v3 credentials and device ACLs.
+
+## Monitoring telemetry storage
+
+Remote telemetry is stored per monitoring assignment in `monitoring_telemetry_latest`. SentinelView maintains `agentless_telemetry_latest` only as a compatibility aggregate for the current Prometheus/UI layer while v0.4 migration is in progress.
+
+This prevents an SNMP poll with partial fields from erasing CPU/RAM/disk data previously collected by SSH or WinRM on the same Asset.
 
 ## Notification troubleshooting
 
@@ -116,7 +135,7 @@ For WinRM, verify that the target allows the selected transport and that the sup
 docker compose logs -f notification-worker
 ```
 
-Open **Configure -> Notifications** to inspect recent delivery state and use **Test** for a real delivery attempt.
+Open **Alerts -> Notifications** to inspect recent delivery state and use **Test** for a real delivery attempt.
 
 Delivery states include:
 
@@ -129,7 +148,7 @@ failed
 
 Pending failures use bounded exponential retry. `last_error` records the most recent delivery error without exposing the stored channel secret through the API.
 
-Channel delivery configuration is encrypted using `SENTINEL_CREDENTIAL_SECRET`. Keep that value stable. Changing it without deliberate credential rotation makes existing agentless and notification credentials undecryptable.
+Channel delivery configuration is encrypted using `SENTINEL_CREDENTIAL_SECRET`. Keep that value stable. Changing it without deliberate credential rotation makes existing remote-monitoring and notification credentials undecryptable.
 
 ## Maintenance troubleshooting
 
@@ -149,7 +168,7 @@ If the browser returns to the login screen, the signed session expired, the loca
 
 Role changes apply to already-issued bearer sessions because SentinelView reloads the current local-user role on authenticated requests.
 
-If you changed `SENTINEL_ADMIN_PASSWORD` after the first database start, the existing user is not automatically overwritten. Use the Users page or intentionally recreate the lab database.
+If you changed `SENTINEL_ADMIN_PASSWORD` after the first database start, the existing user is not automatically overwritten. Use the Access page or intentionally recreate the lab database.
 
 ## Grafana persistent admin password
 
@@ -179,8 +198,9 @@ When creating `.env` from `.env.example`, keep the password embedded in `SENTINE
 2. Keep a copy of `.env` and especially the stable credential/session secrets.
 3. Pull/extract the new SentinelView release.
 4. Move/copy your `.env` into the release directory.
-5. Run `docker compose up -d --build`.
-6. Verify UI login, hosts, agentless worker, notification worker, managed agents and Prometheus targets.
-7. Inspect notification delivery and maintenance/SLA behavior if those features are in use.
+5. Rename `SENTINEL_AGENTLESS_WORKERS` to `SENTINEL_COLLECTOR_WORKERS` when convenient. The old variable is still accepted as a compatibility fallback during v0.4 migration.
+6. Run `docker compose up -d --build`.
+7. Verify UI login, Assets, collector worker, notification worker, managed agents and Prometheus targets.
+8. Inspect notification delivery and maintenance/SLA behavior if those features are in use.
 
 Until formal migrations are introduced, review release notes before upgrades that change existing table columns.

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .maintenance_engine import notifications_suppressed
-from .models import AgentlessMonitor, AgentlessTelemetryLatest, AgentTelemetryLatest, AlertRule, Device, ManagedAgent, Problem
+from .models import AgentlessMonitor, AgentlessTelemetryLatest, AgentTelemetryLatest, AlertRule, Device, Event, ManagedAgent, Problem
 from .notification_engine import enqueue_problem_transition
 
 
@@ -16,28 +16,108 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 def is_agent_online(agent: ManagedAgent | None) -> bool:
     if agent is None or agent.revoked or agent.last_checkin is None:
         return False
-    seen = agent.last_checkin
-    if seen.tzinfo is None:
-        seen = seen.replace(tzinfo=timezone.utc)
-    return (utcnow() - seen).total_seconds() <= settings.agent_online_seconds
+    seen = _aware(agent.last_checkin)
+    return bool(seen and (utcnow() - seen).total_seconds() <= settings.agent_online_seconds)
+
+
+def remote_monitor_health(monitor: AgentlessMonitor, now: datetime | None = None) -> str:
+    now = now or utcnow()
+    if not monitor.enabled:
+        return "unknown"
+    if int(monitor.consecutive_failures or 0) >= 3:
+        return "down"
+    success = _aware(monitor.last_success_at)
+    if success is None:
+        return "unknown"
+    max_age = max(120, int(monitor.interval_seconds or 60) * 3)
+    if (now - success).total_seconds() > max_age:
+        return "unknown"
+    return "up"
+
+
+def monitoring_method_states(db: Session, device: Device, now: datetime | None = None) -> list[tuple[str, str]]:
+    now = now or utcnow()
+    states: list[tuple[str, str]] = []
+    agent = db.execute(
+        select(ManagedAgent).where(
+            ManagedAgent.device_id == device.id,
+            ManagedAgent.revoked.is_(False),
+        )
+    ).scalar_one_or_none()
+    if agent is not None:
+        states.append(("agent", "up" if is_agent_online(agent) else "down"))
+
+    monitors = list(
+        db.execute(
+            select(AgentlessMonitor).where(
+                AgentlessMonitor.device_id == device.id,
+                AgentlessMonitor.enabled.is_(True),
+            )
+        ).scalars()
+    )
+    states.extend((monitor.method, remote_monitor_health(monitor, now)) for monitor in monitors)
+    return states
+
+
+def derive_device_health(db: Session, device: Device, now: datetime | None = None) -> str:
+    states = [state for _method, state in monitoring_method_states(db, device, now)]
+    if not states or all(state == "unknown" for state in states):
+        return "unknown"
+    has_up = "up" in states
+    has_down = "down" in states
+    if has_up and has_down:
+        return "degraded"
+    if has_up:
+        return "up"
+    if has_down:
+        return "down"
+    return "unknown"
+
+
+def reconcile_device_health(db: Session, device: Device, now: datetime | None = None) -> str:
+    now = now or utcnow()
+    target = derive_device_health(db, device, now)
+    previous = device.state or "unknown"
+    if previous == target:
+        return target
+    device.state = target
+    db.add(
+        Event(
+            device_id=device.id,
+            severity="critical" if target == "down" else "warning" if target == "degraded" else "info",
+            event_type="state_change",
+            message=f"{device.hostname or device.ip_address}: {previous} -> {target}",
+            details={
+                "from": previous,
+                "to": target,
+                "source": "monitoring_aggregate",
+                "methods": [
+                    {"method": method, "state": state}
+                    for method, state in monitoring_method_states(db, device, now)
+                ],
+            },
+        )
+    )
+    return target
 
 
 def compare(value: float, operator: str, threshold: float | None) -> bool:
     if threshold is None:
         return False
-    if operator == ">":
-        return value > threshold
-    if operator == ">=":
-        return value >= threshold
-    if operator == "<":
-        return value < threshold
-    if operator == "<=":
-        return value <= threshold
-    if operator in {"=", "=="}:
-        return value == threshold
+    if operator == ">": return value > threshold
+    if operator == ">=": return value >= threshold
+    if operator == "<": return value < threshold
+    if operator == "<=": return value <= threshold
+    if operator in {"=", "=="}: return value == threshold
     return False
 
 
@@ -54,19 +134,23 @@ def state_from_rule(value: float | None, rule: AlertRule | None) -> tuple[str, f
 
 
 def _rule_map(db: Session) -> dict[str, AlertRule]:
-    # Newer rules intentionally override older rules for the same metric. This
-    # also makes duplicate-metric rules deterministic rather than depending on
-    # database iteration order.
-    rules = list(db.execute(
-        select(AlertRule)
-        .where(AlertRule.enabled.is_(True))
-        .order_by(AlertRule.created_at, AlertRule.id)
-    ).scalars())
+    rules = list(
+        db.execute(
+            select(AlertRule)
+            .where(AlertRule.enabled.is_(True))
+            .order_by(AlertRule.created_at, AlertRule.id)
+        ).scalars()
+    )
     return {rule.metric: rule for rule in rules}
 
 
 def latest_telemetry_for_device(db: Session, device: Device):
-    agent = db.execute(select(ManagedAgent).where(ManagedAgent.device_id == device.id)).scalar_one_or_none()
+    agent = db.execute(
+        select(ManagedAgent).where(
+            ManagedAgent.device_id == device.id,
+            ManagedAgent.revoked.is_(False),
+        )
+    ).scalar_one_or_none()
     if agent is not None:
         row = db.get(AgentTelemetryLatest, agent.id)
         if row is not None:
@@ -79,27 +163,32 @@ def latest_telemetry_for_device(db: Session, device: Device):
 
 def services_for_device(db: Session, device: Device) -> list[dict]:
     rules = _rule_map(db)
-    agent = db.execute(select(ManagedAgent).where(ManagedAgent.device_id == device.id)).scalar_one_or_none()
+    now = utcnow()
+    agent = db.execute(
+        select(ManagedAgent).where(
+            ManagedAgent.device_id == device.id,
+            ManagedAgent.revoked.is_(False),
+        )
+    ).scalar_one_or_none()
     telemetry, telemetry_source = latest_telemetry_for_device(db, device)
     hostname = device.hostname or device.ip_address
-    updated = (telemetry.collected_at if telemetry else device.last_seen)
+    updated = telemetry.collected_at if telemetry else device.last_seen
     services: list[dict] = []
 
-    host_state = "ok" if device.state == "up" else "critical" if device.state == "down" else "unknown"
+    asset_health = derive_device_health(db, device, now)
+    host_state = "ok" if asset_health == "up" else "warning" if asset_health == "degraded" else "critical" if asset_health == "down" else "unknown"
     services.append({
         "host_id": device.id,
         "hostname": hostname,
         "service_key": "host:availability",
-        "service_name": "Host availability",
+        "service_name": "Asset health",
         "state": host_state,
-        "value": 1 if device.state == "up" else 0,
+        "value": 1 if asset_health == "up" else 0 if asset_health == "down" else None,
         "unit": None,
-        "message": "Host is reachable" if device.state == "up" else f"Host state is {device.state}",
-        "updated_at": device.last_seen,
+        "message": f"Asset health is {asset_health}",
+        "updated_at": updated,
     })
 
-    # A Sentinel Agent service exists only after a real managed-agent enrollment.
-    # Legacy/stale Device.agent_enabled flags must never create a fake agent.
     if agent is not None:
         online = is_agent_online(agent)
         state, threshold = state_from_rule(1.0 if online else 0.0, rules.get("sentinel_agent_up"))
@@ -117,27 +206,28 @@ def services_for_device(db: Session, device: Device) -> list[dict]:
             "updated_at": agent.last_checkin,
         })
 
-    monitor = db.execute(
-        select(AgentlessMonitor)
-        .where(AgentlessMonitor.device_id == device.id, AgentlessMonitor.enabled.is_(True))
-        .order_by(AgentlessMonitor.updated_at.desc())
-    ).scalars().first()
-    if monitor is not None:
-        now = utcnow()
-        success = monitor.last_success_at
-        if success is not None and success.tzinfo is None:
-            success = success.replace(tzinfo=timezone.utc)
-        stale = success is None or (now - success).total_seconds() > max(120, monitor.interval_seconds * 3)
-        monitor_state = "critical" if stale and monitor.consecutive_failures >= 3 else "unknown" if success is None else "ok"
+    monitors = list(
+        db.execute(
+            select(AgentlessMonitor)
+            .where(
+                AgentlessMonitor.device_id == device.id,
+                AgentlessMonitor.enabled.is_(True),
+            )
+            .order_by(AgentlessMonitor.method, AgentlessMonitor.created_at)
+        ).scalars()
+    )
+    for monitor in monitors:
+        health = remote_monitor_health(monitor, now)
+        monitor_state = "ok" if health == "up" else "critical" if health == "down" else "unknown"
         services.append({
             "host_id": device.id,
             "hostname": hostname,
-            "service_key": f"agentless:{monitor.method}",
+            "service_key": f"monitoring:{monitor.id}",
             "service_name": f"{monitor.method.upper()} monitoring",
             "state": monitor_state,
-            "value": "connected" if monitor_state == "ok" else "unavailable" if monitor_state == "critical" else "pending",
+            "value": "connected" if health == "up" else "unavailable" if health == "down" else "pending",
             "unit": None,
-            "message": monitor.last_error or f"{monitor.method.upper()} collector is healthy",
+            "message": monitor.last_error or f"{monitor.method.upper()} collector is {health}",
             "updated_at": monitor.last_success_at or monitor.last_poll_at,
         })
 
@@ -146,15 +236,17 @@ def services_for_device(db: Session, device: Device) -> list[dict]:
             ("cpu", "CPU utilization", telemetry.cpu_usage_percent, "%"),
             ("memory", "Memory utilization", telemetry.memory_usage_percent, "%"),
         )
-        metric_names = {
-            "cpu": "sentinel_cpu_usage_percent",
-            "memory": "sentinel_memory_usage_percent",
-        }
+        metric_names = {"cpu": "sentinel_cpu_usage_percent", "memory": "sentinel_memory_usage_percent"}
         for key, label, value, unit in metrics:
             state, threshold = state_from_rule(float(value) if value is not None else None, rules.get(metric_names[key]))
             services.append({
-                "host_id": device.id, "hostname": hostname, "service_key": f"metric:{key}",
-                "service_name": label, "state": state, "value": value, "unit": unit,
+                "host_id": device.id,
+                "hostname": hostname,
+                "service_key": f"metric:{key}",
+                "service_name": label,
+                "state": state,
+                "value": value,
+                "unit": unit,
                 "message": f"{label}: {value:.1f}{unit}" if isinstance(value, (int, float)) else f"{label}: no data",
                 "updated_at": telemetry.collected_at,
             })
@@ -164,24 +256,42 @@ def services_for_device(db: Session, device: Device) -> list[dict]:
             value = float(disk.get("usage_percent", 0) or 0)
             state, _ = state_from_rule(value, rules.get("sentinel_disk_usage_percent"))
             services.append({
-                "host_id": device.id, "hostname": hostname, "service_key": f"disk:{mount}",
-                "service_name": f"Disk {mount}", "state": state, "value": value, "unit": "%",
-                "message": f"Disk {mount} usage: {value:.1f}%", "updated_at": telemetry.collected_at,
+                "host_id": device.id,
+                "hostname": hostname,
+                "service_key": f"disk:{mount}",
+                "service_name": f"Disk {mount}",
+                "state": state,
+                "value": value,
+                "unit": "%",
+                "message": f"Disk {mount} usage: {value:.1f}%",
+                "updated_at": telemetry.collected_at,
             })
 
         if telemetry.process_count is not None:
             services.append({
-                "host_id": device.id, "hostname": hostname, "service_key": "process:count",
-                "service_name": "Process count", "state": "ok", "value": telemetry.process_count, "unit": None,
-                "message": f"{telemetry.process_count} running processes", "updated_at": telemetry.collected_at,
+                "host_id": device.id,
+                "hostname": hostname,
+                "service_key": "process:count",
+                "service_name": "Process count",
+                "state": "ok",
+                "value": telemetry.process_count,
+                "unit": None,
+                "message": f"{telemetry.process_count} running processes",
+                "updated_at": telemetry.collected_at,
             })
 
         for nic in telemetry.interfaces or []:
             name = str(nic.get("name", "unknown"))
             services.append({
-                "host_id": device.id, "hostname": hostname, "service_key": f"interface:{name}",
-                "service_name": f"Interface {name}", "state": "ok", "value": None, "unit": None,
-                "message": "Interface counters are being collected", "updated_at": telemetry.collected_at,
+                "host_id": device.id,
+                "hostname": hostname,
+                "service_key": f"interface:{name}",
+                "service_name": f"Interface {name}",
+                "state": "ok",
+                "value": None,
+                "unit": None,
+                "message": "Interface counters are being collected",
+                "updated_at": telemetry.collected_at,
             })
 
     return services
@@ -199,7 +309,11 @@ def sync_problems(db: Session) -> list[Problem]:
     now = utcnow()
     rules = _rule_map(db)
 
-    for device in db.execute(select(Device)).scalars():
+    devices = list(db.execute(select(Device)).scalars())
+    for device in devices:
+        reconcile_device_health(db, device, now)
+
+    for device in devices:
         suppressed = notifications_suppressed(db, device, now)
         for service in services_for_device(db, device):
             if service["state"] not in {"warning", "critical"}:
@@ -216,14 +330,10 @@ def sync_problems(db: Session) -> list[Problem]:
             ).scalar_one_or_none()
 
             metric = None
-            if service["service_key"] == "metric:cpu":
-                metric = "sentinel_cpu_usage_percent"
-            elif service["service_key"] == "metric:memory":
-                metric = "sentinel_memory_usage_percent"
-            elif service["service_key"].startswith("disk:"):
-                metric = "sentinel_disk_usage_percent"
-            elif service["service_key"] == "agent:health":
-                metric = "sentinel_agent_up"
+            if service["service_key"] == "metric:cpu": metric = "sentinel_cpu_usage_percent"
+            elif service["service_key"] == "metric:memory": metric = "sentinel_memory_usage_percent"
+            elif service["service_key"].startswith("disk:"): metric = "sentinel_disk_usage_percent"
+            elif service["service_key"] == "agent:health": metric = "sentinel_agent_up"
             rule = rules.get(metric) if metric else None
             value = service.get("value") if isinstance(service.get("value"), (int, float)) else None
             threshold = None

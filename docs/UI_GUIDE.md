@@ -1,100 +1,82 @@
-# SentinelView v0.3.0 UI Guide
+# SentinelView v0.4 UI Guide
 
 The first-party UI is available on port `3001` and is the primary operator interface.
+
+v0.4 consolidates the UI around operator workflows. Legacy component routes still exist during migration, but they are presented as tabs inside the corresponding domain instead of separate top-level products.
 
 ## Navigation
 
 ### Monitor
-
-- **Overview** — top-level host/service/problem/agent health, sites and recent events.
-- **Hosts** — monitored assets with service/problem counts.
-- **Services** — service-centric view across every host.
+- **Dashboard** — top-level asset/service/problem/agent health, sites and recent events.
+- **Assets** — one infrastructure workspace. Tabs provide All assets, Services, Topology, Discover and Inventory details.
 - **Problems** — active warning/critical/suppressed conditions and acknowledgement.
-- **Events** — discovery, agent and state-change event history.
-- **Topology** — visual graph of devices and known edges.
+- **Operational Events** — discovery observations, collection state changes, agent events and runtime history.
 
-### Manage
-
-- **Discovery** — launch private CIDR scans and view progress/history.
-- **Inventory** — asset metadata including IP, MAC, class, site, agent and SNMP state.
-- **Agents** — optional one-command managed-agent enrollment and lifecycle status.
-- **Agentless** — configure WinRM, SSH or SNMP monitoring for selected IPs, discovered hosts or an entire authorized private CIDR.
-- **Agent Policies** — managed-agent collector enablement and collection/check-in intervals.
-
-### Configure
-
-- **Credentials** — encrypted WinRM, SSH and SNMP credential profiles.
-- **Monitoring Rules** — CPU/RAM/disk/agent thresholds.
-- **SNMP** — create generic SNMP monitoring targets.
-- **Integrations** — implemented and planned integration packs.
-- **Notifications** — webhook/Slack/Teams/Telegram/SMTP channels, test delivery and recent delivery state.
-- **Maintenance** — host/site/global maintenance windows with problem-notification suppression and optional SLA exclusion.
+### Manage / Configure
+- **Monitoring** — how SentinelView collects data. Tabs expose Managed agent, Remote collectors (WinRM/SSH/SNMP), Credentials, Agent settings and the compatibility SNMP exporter view.
+- **Alerts** — Rules, Notifications and Maintenance in one workflow.
 
 ### Report
-
-- **Availability & SLA** — availability calculations and SLA targets with maintenance exclusions applied to the eligible denominator.
+- **Availability & SLA** — availability calculations and SLA targets with maintenance exclusions.
 
 ### Platform
+- **Access** — local users and roles.
+- **Audit** — administrative actions.
+- **Settings** — platform state, advanced component links and capability catalog.
 
-- **Users & Roles** — local account management (admin only).
-- **Audit Log** — administrative actions (admin/operator).
-- **Settings** — platform feature state and advanced component links.
+## Asset lifecycle
+
+```text
+Discover network OR add asset manually OR enroll managed agent
+                         ↓
+                       Asset
+                         ↓
+              assign monitoring method
+                         ↓
+              Services / Problems / SLA
+```
+
+Discovery finds and enriches Assets. Monitoring determines health/performance through Managed Agent, WinRM, SSH, SNMP or other configured methods. Enabling remote monitoring for an arbitrary IP no longer creates an inventory asset implicitly; add or discover it first.
 
 ## Global search
 
 Use the top-bar search or `Ctrl+K` to search hostnames/IPs and event messages.
 
-## Host detail
+## Asset detail
 
-Click a host from Hosts, Inventory, Services, Availability or Topology.
+Click an asset from Assets, Services, Availability or Topology. Asset Detail includes identity metadata, latest telemetry, disks, Prometheus history, service state, active problems and managed-agent identity when enrolled.
 
-Host Detail includes:
+## Discovery
 
-- state and inventory metadata;
-- latest CPU, RAM, process and uptime telemetry when a collector is configured;
-- disk usage;
-- CPU and memory historical charts from Prometheus;
-- service state table;
-- active problems;
-- managed-agent identity/version when enrolled.
+The Discover tab scans authorized private CIDRs and records identity/observation information such as IP, hostname, MAC, ports and inferred class. Discovery does **not** mark an asset operationally down simply because a later scan does not receive a response.
 
-Performance telemetry can come from agentless WinRM/SSH/SNMP or from the optional managed Sentinel Agent.
+## Monitoring
+
+### Managed agent
+Generate short-lived installers and manage enrollment lifecycle.
+
+### Remote collectors
+Use WinRM for Windows, SSH for Linux/Unix and SNMP for network/infrastructure devices. Monitoring assignments only target existing Assets.
+
+### Credentials
+Secrets are encrypted before storage and are not returned by API/UI responses. A credential can also be created inline from the Remote collectors workflow.
+
+### Agent settings
+Managed-agent collection/check-in behavior remains centrally policy-driven.
+
+### SNMP exporter
+The compatibility SNMP exporter tab remains during migration. It is no longer a separate top-level product concept; SNMP is a monitoring method.
 
 ## Problem acknowledgement and maintenance
 
-Open Problems and click **Acknowledge**. The problem remains active while the condition is still bad but records the acknowledging user and time. It automatically resolves when the service returns to OK.
-
-If a matching active maintenance window has **Suppress problem notifications** enabled, the underlying bad condition remains visible but the problem is placed into a suppressed state and notification delivery is not attempted. When the maintenance window ends while the condition is still bad, SentinelView returns the problem to open/acknowledged state and queues a post-maintenance transition.
+Problems can be acknowledged while active and resolve automatically on recovery. Matching maintenance can suppress problem notifications and optionally exclude time from SLA accounting.
 
 ## Notifications
 
-Create a channel in **Configure -> Notifications** and provide channel-specific JSON configuration. Supported channel types are webhook, Slack, Microsoft Teams, Telegram and SMTP email.
-
-The page exposes:
-
-- configured channels;
-- a **Test** action for a real delivery attempt;
-- recent queued/sent/suppressed/failed delivery records;
-- retry errors and attempt counts.
-
-Sensitive channel configuration is encrypted at rest and redacted from API/UI responses.
-
-## Availability & SLA
-
-Availability is derived from recorded state-change events. A maintenance window with **Exclude from SLA accounting** enabled removes the overlapping interval from the denominator instead of counting that planned downtime as unavailable time.
-
-## Agent installation
-
-Go to Agents and generate a short-lived one-command installer. Use the Control API LAN/DNS URL reachable by the endpoint, not `localhost`.
-
-The managed agent is optional; it is an enhanced monitoring path rather than a prerequisite for basic performance metrics.
+Create a channel under **Alerts -> Notifications**. Supported types are webhook, Slack, Microsoft Teams, Telegram and SMTP email. Sensitive configuration is encrypted and redacted.
 
 ## Viewer/operator/admin behavior
 
 - Viewer: read-oriented monitoring pages.
 - Operator: write monitoring configuration and view audit log.
 - Admin: user management plus all operator functions.
-
-Active bearer sessions re-check the current local user record on each authenticated request. Disabling a user invalidates the existing session and role changes take effect immediately.
-
-This role model is intentionally simple in v0.3.0. Granular per-site/per-object permissions are roadmap work.
