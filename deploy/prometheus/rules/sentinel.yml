@@ -1,46 +1,7 @@
-groups:
-  - name: sentinel-host-health
-    rules:
-      - alert: SentinelAgentDown
-        expr: sentinel_agent_up == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Sentinel agent offline on {{ $labels.hostname }}"
-          description: "The managed agent has not checked in within the configured online window."
-
-      - alert: SentinelHighCPU
-        expr: sentinel_cpu_usage_percent > 90
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High CPU on {{ $labels.hostname }}"
-          description: "CPU usage has remained above 90% for five minutes."
-
-      - alert: SentinelHighMemory
-        expr: sentinel_memory_usage_percent > 90
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High memory on {{ $labels.hostname }}"
-          description: "Memory usage has remained above 90% for five minutes."
-
-      - alert: SentinelDiskNearlyFull
-        expr: sentinel_disk_usage_percent > 90
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Disk nearly full on {{ $labels.hostname }}"
-          description: "Disk usage on {{ $labels.mountpoint }} is above 90%."
-
-      - alert: SentinelProbeDown
-        expr: probe_success{job="sentinel-blackbox-icmp"} == 0
-        for: 3m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Network probe failed for {{ $labels.hostname }}"
+# SentinelView owns alert evaluation in the Control API:
+# telemetry -> Monitoring Rules -> Services -> Problems -> Notifications.
+#
+# Prometheus is the time-series/history backend and must not maintain a second
+# set of independently configured alert thresholds. Keeping this file valid but
+# empty prevents threshold drift between the first-party UI and Prometheus.
+groups: []
