@@ -47,4 +47,41 @@ def _deduplicate_api_routes() -> int:
     return removed
 
 
+def _install_asset_aliases() -> None:
+    """Expose Assets as the canonical monitored-infrastructure API.
+
+    Existing /hosts routes remain callable for older clients but are hidden
+    from OpenAPI. The aliases reuse the already tested endpoint functions and
+    therefore keep the same authentication, filtering and response behavior.
+    """
+    for route in app.router.routes:
+        if isinstance(route, APIRoute) and route.path.startswith("/api/v1/hosts"):
+            route.include_in_schema = False
+
+    app.add_api_route(
+        "/api/v1/assets",
+        _legacy.list_hosts,
+        methods=["GET"],
+        response_model=list[_legacy.HostSummaryOut],
+        tags=["assets"],
+        name="list_assets",
+    )
+    app.add_api_route(
+        "/api/v1/assets/{device_id}/overview",
+        _legacy.host_overview,
+        methods=["GET"],
+        response_model=_legacy.HostOverviewOut,
+        tags=["assets"],
+        name="asset_overview",
+    )
+    app.add_api_route(
+        "/api/v1/assets/{device_id}/metrics",
+        _legacy.host_metric_history,
+        methods=["GET"],
+        tags=["assets"],
+        name="asset_metric_history",
+    )
+
+
 _deduplicate_api_routes()
+_install_asset_aliases()
