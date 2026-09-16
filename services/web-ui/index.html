@@ -19,7 +19,7 @@
       </div>
       <div class="login-copy">
         <h1>Sign in to SentinelView</h1>
-        <p>Manage hosts, services, problems, discovery, agents, rules and availability from one interface.</p>
+        <p>Manage assets, monitoring, problems, alerts and availability from one interface.</p>
       </div>
       <form id="login-form" class="form-stack">
         <label>Username<input id="login-username" autocomplete="username" value="admin" required /></label>
@@ -41,31 +41,16 @@
       <nav class="nav" id="nav">
         <div class="nav-section">
           <div class="nav-label">Monitor</div>
-          <a href="#overview" class="nav-item" data-route="overview"><span class="nav-icon">⌂</span><span>Overview</span></a>
-          <a href="#hosts" class="nav-item" data-route="hosts"><span class="nav-icon">▣</span><span>Hosts</span></a>
-          <a href="#services" class="nav-item" data-route="services"><span class="nav-icon">≡</span><span>Services</span></a>
+          <a href="#overview" class="nav-item" data-route="overview"><span class="nav-icon">⌂</span><span>Dashboard</span></a>
+          <a href="#hosts" class="nav-item" data-route="hosts" data-route-group="assets"><span class="nav-icon">▣</span><span>Assets</span></a>
           <a href="#problems" class="nav-item" data-route="problems"><span class="nav-icon">!</span><span>Problems</span><span id="nav-problem-count" class="nav-count hidden">0</span></a>
-          <a href="#events" class="nav-item" data-route="events"><span class="nav-icon">◷</span><span>Events</span></a>
-          <a href="#topology" class="nav-item" data-route="topology"><span class="nav-icon">◇</span><span>Topology</span></a>
-        </div>
-
-        <div class="nav-section">
-          <div class="nav-label">Manage</div>
-          <a href="#discovery" class="nav-item" data-route="discovery"><span class="nav-icon">⌁</span><span>Discovery</span></a>
-          <a href="#devices" class="nav-item" data-route="devices"><span class="nav-icon">▤</span><span>Inventory</span></a>
-          <a href="#agents" class="nav-item" data-route="agents"><span class="nav-icon">◎</span><span>Agents</span></a>
-          <a href="#agentless" class="nav-item" data-route="agentless"><span class="nav-icon">⌁</span><span>Agentless</span></a>
-          <a href="#policies" class="nav-item" data-route="policies"><span class="nav-icon">☷</span><span>Agent Policies</span></a>
+          <a href="#events" class="nav-item" data-route="events"><span class="nav-icon">◷</span><span>Operational Events</span></a>
         </div>
 
         <div class="nav-section">
           <div class="nav-label">Configure</div>
-          <a href="#credentials" class="nav-item" data-route="credentials"><span class="nav-icon">⌾</span><span>Credentials</span></a>
-          <a href="#rules" class="nav-item" data-route="rules"><span class="nav-icon">⟐</span><span>Monitoring Rules</span></a>
-          <a href="#snmp" class="nav-item" data-route="snmp"><span class="nav-icon">⌘</span><span>SNMP</span></a>
-          <a href="#integrations" class="nav-item" data-route="integrations"><span class="nav-icon">⊞</span><span>Integrations</span></a>
-          <a href="#notifications" class="nav-item" data-route="notifications"><span class="nav-icon">✉</span><span>Notifications</span></a>
-          <a href="#maintenance" class="nav-item" data-route="maintenance"><span class="nav-icon">◴</span><span>Maintenance</span></a>
+          <a href="#agentless" class="nav-item" data-route="agentless" data-route-group="monitoring"><span class="nav-icon">◎</span><span>Monitoring</span></a>
+          <a href="#rules" class="nav-item" data-route="rules" data-route-group="alerts"><span class="nav-icon">⟐</span><span>Alerts</span></a>
         </div>
 
         <div class="nav-section">
@@ -75,8 +60,8 @@
 
         <div class="nav-section">
           <div class="nav-label">Platform</div>
-          <a href="#users" class="nav-item admin-only" data-route="users"><span class="nav-icon">♙</span><span>Users & Roles</span></a>
-          <a href="#audit" class="nav-item" data-route="audit"><span class="nav-icon">⌕</span><span>Audit Log</span></a>
+          <a href="#users" class="nav-item admin-only" data-route="users"><span class="nav-icon">♙</span><span>Access</span></a>
+          <a href="#audit" class="nav-item" data-route="audit"><span class="nav-icon">⌕</span><span>Audit</span></a>
           <a href="#settings" class="nav-item" data-route="settings"><span class="nav-icon">⚙</span><span>Settings</span></a>
         </div>
       </nav>
@@ -91,9 +76,9 @@
     <main class="main">
       <header class="topbar">
         <button id="mobile-menu" class="icon-button mobile-menu" title="Menu">☰</button>
-        <div class="page-heading"><h1 id="page-title">Overview</h1><p id="page-subtitle">Infrastructure health at a glance</p></div>
+        <div class="page-heading"><h1 id="page-title">Dashboard</h1><p id="page-subtitle">Infrastructure health at a glance</p></div>
         <div class="global-search-wrap">
-          <input id="global-search" class="global-search" placeholder="Search hosts and events..." autocomplete="off" />
+          <input id="global-search" class="global-search" placeholder="Search assets and events..." autocomplete="off" />
           <kbd>Ctrl K</kbd>
           <div id="search-results" class="search-results hidden"></div>
         </div>
