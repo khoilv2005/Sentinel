@@ -16,12 +16,15 @@ export function clearSession() {
 
 function canonicalApiPath(path) {
   if (typeof path !== 'string') return path;
-  // v0.4 consolidates the operator-facing concept under /monitoring while
-  // keeping /agentless aliases server-side for older automation clients.
+  // v0.4 routes the first-party UI through canonical product-domain APIs.
+  // Legacy /hosts and /agentless routes remain available server-side for
+  // older clients and automation during the compatibility window.
   return path
     .replace('/api/v1/agentless/monitors', '/api/v1/monitoring/assignments')
     .replace('/api/v1/agentless/candidates', '/api/v1/monitoring/candidates')
-    .replace('/api/v1/agentless/test', '/api/v1/monitoring/test');
+    .replace('/api/v1/agentless/test', '/api/v1/monitoring/test')
+    .replace('/api/v1/hosts/', '/api/v1/assets/')
+    .replace(/^\/api\/v1\/hosts(?=\?|$)/, '/api/v1/assets');
 }
 
 export async function api(path, options = {}) {
