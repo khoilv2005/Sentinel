@@ -13,30 +13,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r services/control-api/requirements.txt
-      - name: Inspect modular API routes
-        run: |
-          PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-ci.db python - <<'PY'
-          from fastapi.routing import APIRoute
-          from app.main import app
-
-          rows = []
-          all_routes = []
-          for route in app.router.routes:
-              route_type = f"{type(route).__module__}.{type(route).__name__}"
-              path = getattr(route, "path", None)
-              nested = getattr(route, "routes", None)
-              all_routes.append((route_type, path, len(nested) if nested is not None else None))
-              if isinstance(route, APIRoute) and any(token in route.path for token in ("notification", "maintenance", "availability")):
-                  rows.append((route.path, sorted(route.methods or ()), route.endpoint.__module__, route.endpoint.__name__))
-              if nested:
-                  for child in nested:
-                      child_path = getattr(child, "path", None)
-                      if child_path and any(token in child_path for token in ("notification", "maintenance", "availability")):
-                          print("NESTED_OPERATION", route_type, path, type(child).__name__, child_path, getattr(child, "methods", None), getattr(getattr(child, "endpoint", None), "__module__", None))
-          print("MODULAR_ROUTE_DIAGNOSTICS", rows)
-          print("ROUTE_TYPES", all_routes)
-          PY
-      - run: PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-ci.db pytest -vv services/control-api/tests
+      - run: PYTHONPATH=services/control-api SENTINEL_DB_URL=sqlite:////tmp/sentinel-ci.db pytest -q services/control-api/tests
 
   agent:
     runs-on: ubuntu-latest
