@@ -9,6 +9,7 @@ from typing import Any
 
 import paramiko
 import winrm
+from winrm.exceptions import WinRMOperationTimeoutError
 
 
 def _normalize(result: dict[str, Any], source: str) -> dict[str, Any]:
@@ -39,7 +40,25 @@ def collect_winrm(target: str, username: str | None, secrets: dict[str, str], op
     endpoint = f"{'https' if use_https else 'http'}://{target}:{port}/wsman"
     transport = str(options.get("transport") or "ntlm")
     validation = "validate" if bool(options.get("validate_cert", False)) else "ignore"
-    session = winrm.Session(endpoint, auth=(auth_user, password), transport=transport, server_cert_validation=validation)
+
+    operation_timeout_sec = int(options.get("operation_timeout_sec") or 30)
+    read_timeout_sec = int(options.get("read_timeout_sec") or max(operation_timeout_sec + 15, 45))
+    if operation_timeout_sec < 1:
+        raise ValueError("WinRM operation_timeout_sec must be at least 1")
+    if read_timeout_sec <= operation_timeout_sec:
+        raise ValueError("WinRM read_timeout_sec must exceed operation_timeout_sec")
+    retries = max(0, min(int(options.get("retries", 1)), 3))
+
+    def new_session():
+        return winrm.Session(
+            endpoint,
+            auth=(auth_user, password),
+            transport=transport,
+            server_cert_validation=validation,
+            operation_timeout_sec=operation_timeout_sec,
+            read_timeout_sec=read_timeout_sec,
+        )
+
     script = r'''
 $ErrorActionPreference = 'Stop'
 $os = Get-CimInstance Win32_OperatingSystem
@@ -79,7 +98,18 @@ $uptime = [int64]((Get-Date) - $os.LastBootUpTime).TotalSeconds
   interfaces = $interfaces
 } | ConvertTo-Json -Compress -Depth 5
 '''
-    result = session.run_ps(script)
+
+    result = None
+    for attempt in range(retries + 1):
+        try:
+            result = new_session().run_ps(script)
+            break
+        except WinRMOperationTimeoutError:
+            if attempt >= retries:
+                raise
+            time.sleep(min(1.0 + attempt, 3.0))
+    if result is None:
+        raise RuntimeError("WinRM returned no result")
     if result.status_code != 0:
         stderr = result.std_err.decode("utf-8", "replace").strip()
         raise RuntimeError(stderr or f"WinRM PowerShell returned {result.status_code}")
@@ -87,7 +117,12 @@ $uptime = [int64]((Get-Date) - $os.LastBootUpTime).TotalSeconds
     if not text:
         raise RuntimeError("WinRM returned no telemetry")
     data = json.loads(text)
-    data["raw"] = {"transport": transport, "endpoint": endpoint}
+    data["raw"] = {
+        "transport": transport,
+        "endpoint": endpoint,
+        "operation_timeout_sec": operation_timeout_sec,
+        "read_timeout_sec": read_timeout_sec,
+    }
     return _normalize(data, "winrm")
 
 
