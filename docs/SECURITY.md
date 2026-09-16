@@ -1,8 +1,8 @@
-# SentinelView Security Notes — v0.3.0
+# SentinelView Security Notes — v0.4.0
 
 ## Intended deployment
 
-v0.3.0 is appropriate for a trusted lab or management VLAN. Before exposing it outside that environment, put SentinelView behind HTTPS and apply normal network segmentation/firewall controls.
+v0.4.0 is appropriate for a trusted lab or management VLAN. Before exposing it outside that environment, put SentinelView behind HTTPS and apply normal network segmentation/firewall controls.
 
 ## UI authentication
 
@@ -49,7 +49,7 @@ SHA-256 verifies integrity but is not equivalent to publisher code signing. Auth
 
 Prefer SNMPv3 for production devices. v1/v2c community strings are not encrypted in transit.
 
-v0.3.0 stores SNMP profile identifiers, not a full production secret-management system. Vault-style encrypted credential management remains future work.
+v0.4.0 stores SNMP profile identifiers, not a full production secret-management system. Vault-style encrypted credential management remains future work.
 
 ## Default secrets
 

@@ -1,4 +1,4 @@
-# Grafana in SentinelView v0.3.0
+# Grafana in SentinelView v0.4.0
 
 Grafana is no longer the main SentinelView UI.
 

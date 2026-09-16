@@ -156,7 +156,7 @@ ensure_bootstrap_data()
 
 app = FastAPI(
     title="SentinelView Control API",
-    version="0.3.0",
+    version="0.4.0",
     description="SentinelView infrastructure monitoring control plane with first-party operations UI and Fleet-style agents",
 )
 app.add_middleware(
@@ -193,7 +193,7 @@ async def metrics_middleware(request: Request, call_next):
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "service": "sentinelview-control", "version": "0.3.0"}
+    return {"status": "ok", "service": "sentinelview-control", "version": "0.4.0"}
 
 
 @app.get("/readyz")
@@ -869,7 +869,7 @@ def ui_overview(identity: dict = Depends(control_identity), db: Session = Depend
         if d:
             site_counts.setdefault(d.site or "default", {"site": d.site or "default", "total": 0, "up": 0, "down": 0, "problems": 0})["problems"] += 1
     return {
-        "version": "0.3.0",
+        "version": "0.4.0",
         "hosts": {"total": len(devices), "up": sum(1 for d in devices if d.state == "up"), "down": sum(1 for d in devices if d.state == "down"), "unknown": sum(1 for d in devices if d.state not in {"up", "down"})},
         "services": {"total": len(services), "ok": sum(1 for s in services if s["state"] == "ok"), "warning": sum(1 for s in services if s["state"] == "warning"), "critical": sum(1 for s in services if s["state"] == "critical"), "unknown": sum(1 for s in services if s["state"] == "unknown")},
         "problems": {"total": len(problems), "critical": sum(1 for p in problems if p.severity == "critical"), "warning": sum(1 for p in problems if p.severity == "warning"), "acknowledged": sum(1 for p in problems if p.state == "acknowledged")},
@@ -1154,7 +1154,7 @@ def list_audit(limit: int = Query(300, ge=1, le=2000), identity: dict = Depends(
 @app.get("/api/v1/platform/settings")
 def platform_settings(identity: dict = Depends(control_identity), db: Session = Depends(get_db)):
     return {
-        "version": "0.3.0",
+        "version": "0.4.0",
         "monitoring_ui": "SentinelView",
         "prometheus_url": settings.prometheus_url,
         "agent_online_seconds": settings.agent_online_seconds,

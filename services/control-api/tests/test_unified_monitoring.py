@@ -62,6 +62,45 @@ def test_unified_monitoring_api_keeps_legacy_aliases():
         db.close()
 
 
+def test_sync_problems_repairs_duplicate_active_rows():
+    from app.db import SessionLocal
+    from app.models import Device, Problem
+    from app.monitoring import sync_problems
+
+    db = SessionLocal()
+    suffix = uuid.uuid4().hex[:8]
+    device = Device(ip_address=f"10.253.205.{int(suffix[:2], 16) % 200 + 1}", state="down")
+    try:
+        db.add(device)
+        db.flush()
+        db.add_all([
+            Problem(
+                device_id=device.id, service_key="host:availability", service_name="Host availability",
+                severity="critical", state="open", title="Host availability is critical", message="Host is down",
+            ),
+            Problem(
+                device_id=device.id, service_key="host:availability", service_name="Host availability",
+                severity="critical", state="open", title="Host availability is critical", message="Host is down",
+            ),
+        ])
+        db.commit()
+
+        sync_problems(db)
+        db.commit()
+
+        active = db.query(Problem).filter(
+            Problem.device_id == device.id,
+            Problem.service_key == "host:availability",
+            Problem.state != "resolved",
+        ).all()
+        assert len(active) == 1
+    finally:
+        db.query(Problem).filter(Problem.device_id == device.id).delete()
+        db.query(Device).filter(Device.id == device.id).delete()
+        db.commit()
+        db.close()
+
+
 def test_per_assignment_telemetry_does_not_collide_for_same_asset():
     from app.collector_models import CollectorTelemetryLatest
     from app.db import SessionLocal

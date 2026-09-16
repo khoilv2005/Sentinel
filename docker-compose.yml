@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   control-api:
-    image: sentinelview-control-api:0.3.0
+    image: sentinelview-control-api:0.4.0
     build:
       context: .
       dockerfile: services/control-api/Dockerfile
@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
 
   discovery-worker:
-    image: sentinelview-control-api:0.3.0
+    image: sentinelview-control-api:0.4.0
     build:
       context: .
       dockerfile: services/control-api/Dockerfile
@@ -67,7 +67,7 @@ services:
     restart: unless-stopped
 
   collector-worker:
-    image: sentinelview-control-api:0.3.0
+    image: sentinelview-control-api:0.4.0
     build:
       context: .
       dockerfile: services/control-api/Dockerfile
@@ -85,7 +85,7 @@ services:
     restart: unless-stopped
 
   notification-worker:
-    image: sentinelview-control-api:0.3.0
+    image: sentinelview-control-api:0.4.0
     build:
       context: .
       dockerfile: services/control-api/Dockerfile
@@ -104,7 +104,7 @@ services:
     restart: unless-stopped
 
   web-ui:
-    image: sentinelview-web-ui:0.3.0
+    image: sentinelview-web-ui:0.4.0
     build:
       context: ./services/web-ui
     ports:

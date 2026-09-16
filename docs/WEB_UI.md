@@ -1,6 +1,6 @@
 # SentinelView Web UI
 
-The v0.3.0 first-party operations console is documented in [UI_GUIDE.md](UI_GUIDE.md).
+The v0.4.0 first-party operations console is documented in [UI_GUIDE.md](UI_GUIDE.md).
 
 Primary URL:
 

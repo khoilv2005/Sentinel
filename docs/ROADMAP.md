@@ -35,6 +35,13 @@
 - service acknowledgement comments and ownership;
 - better host/service grouping and saved views.
 
+## v0.4.0 — Unified Operations (implemented)
+
+- unified Assets -> Monitoring -> Services/Problems -> Notifications -> SLA workflow;
+- consolidated operator navigation and compatibility redirects;
+- per-assignment WinRM/SSH/SNMP telemetry and health aggregation;
+- Control API as the single alert-evaluation source with notification delivery and maintenance-aware SLA reporting.
+
 ## v0.3.2 — Network/NOC depth
 
 - LLDP/CDP ingestion;
@@ -55,7 +62,7 @@
 - signed release artifacts;
 - agent update inventory and manual central update.
 
-## v0.4.0 — Distributed monitoring
+## v0.5.0 — Distributed monitoring
 
 - remote collectors;
 - multi-site control plane;

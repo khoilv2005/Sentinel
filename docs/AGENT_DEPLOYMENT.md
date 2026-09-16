@@ -1,4 +1,4 @@
-# SentinelView v0.3.0 Agent Deployment
+# SentinelView v0.4.0 Agent Deployment
 
 ## Goal
 
@@ -109,4 +109,4 @@ Prometheus -> query sentinel_agent_up
 
 ## Packaging status
 
-v0.3.0 implements a one-command bootstrap installer plus native service installation. MSI/DEB/RPM release packages are still planned.
+v0.4.0 implements a one-command bootstrap installer plus native service installation. MSI/DEB/RPM release packages are still planned.

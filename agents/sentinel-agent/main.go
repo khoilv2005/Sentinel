@@ -27,7 +27,7 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 const serviceName = "SentinelViewAgent"
 
 type config struct {

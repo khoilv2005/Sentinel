@@ -207,13 +207,18 @@ def sync_problems(db: Session) -> list[Problem]:
 
             key = (device.id, service["service_key"])
             active_keys.add(key)
-            problem = db.execute(
+            matching_problems = db.execute(
                 select(Problem).where(
                     Problem.device_id == device.id,
                     Problem.service_key == service["service_key"],
                     Problem.state != "resolved",
-                )
-            ).scalar_one_or_none()
+                ).order_by(Problem.opened_at, Problem.id)
+            ).scalars().all()
+            problem = matching_problems[0] if matching_problems else None
+            for duplicate in matching_problems[1:]:
+                duplicate.state = "resolved"
+                duplicate.resolved_at = now
+                duplicate.updated_at = now
 
             metric = None
             if service["service_key"] == "metric:cpu":

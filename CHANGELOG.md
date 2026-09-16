@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v0.4 unified operations
+## 0.4.0 — 2026-09-16
 
 ### Product consolidation
 
@@ -47,7 +47,7 @@
 - Updated integration CI job naming to use remote-collector terminology.
 - Added an upgrade note for the `collector-worker` service rename without deleting persistent volumes.
 
-## Unreleased — audit hardening
+### Audit hardening
 
 ### Agentless validation
 
