@@ -1,76 +1,159 @@
-# SentinelView v0.3.0 Project Status
+# SentinelView Project Status — v0.4 consolidation
 
 ## Release objective
 
-v0.3.0 converts SentinelView from a monitoring backend with a small scan UI into a platform with a first-party operations console and supports both agentless and optional managed-agent monitoring.
+The v0.4 consolidation removes duplicate operator concepts without removing monitoring capability. SentinelView now presents one asset model, one monitoring workflow and one alerting workflow instead of exposing backend implementation components as separate product features.
 
-## Implemented and tested
+The canonical product flow is:
 
-### First-party UI
+```text
+Assets -> Monitoring -> Services/Problems -> Notifications -> SLA
+```
 
-- Login/session flow.
-- Overview dashboard.
-- Hosts and Host Detail.
-- Service-centric monitoring.
-- Active Problems, suppression state and acknowledgement.
-- Events.
-- Network Discovery.
-- Inventory.
-- Managed Agents.
-- Agentless WinRM/SSH/SNMP monitoring.
-- Agentless `/24` candidate listing and selected/discovered/entire-CIDR assignment.
-- Encrypted credential profiles.
-- Agent Policies.
-- Monitoring Rules.
-- Topology visualization.
-- SNMP targets.
-- Integration catalog.
-- Notification channel configuration, channel test and delivery-status view.
-- Maintenance windows with problem-notification suppression and SLA exclusion.
-- Availability/SLA views.
-- Users & Roles.
-- Audit Log.
-- Global search.
-- Settings/advanced component links.
+## Product domains
 
-### Control plane
+SentinelView is organized into six domains:
 
-- Local PBKDF2 users.
-- Signed UI bearer sessions with current account enabled/role state revalidated from PostgreSQL.
-- Existing API-key automation compatibility.
-- Derived services from managed-agent or agentless telemetry.
-- Persistent problem lifecycle.
-- Problem acknowledgement and maintenance suppression.
-- Rule editing with duplicate-metric bootstrap regression protection.
-- Policy editing/versioning.
-- Audit events.
-- Maintenance/SLA/channel models.
-- Maintenance-aware availability and SLA denominator exclusion.
-- Persistent notification delivery queue.
-- Automatic problem open/escalation/recovery/post-maintenance notification transitions.
-- Webhook, Slack, Teams, Telegram and SMTP delivery.
-- Bounded notification retry/backoff.
-- Encrypted notification delivery configuration with redacted API responses.
-- Prometheus history proxy for host charts.
-- Availability calculation from state-change events.
+1. **Assets** — inventory, discovery, services and topology.
+2. **Collection** — Managed Agent, WinRM, SSH, SNMP and ICMP/blackbox methods.
+3. **Monitoring** — runtime state and derived services.
+4. **Alerting** — rules, problems, notifications and maintenance.
+5. **Reporting** — availability and SLA.
+6. **Platform** — access, audit and settings.
 
-### Collection and workers
+## First-party UI
 
-- private CIDR discovery;
-- PostgreSQL inventory;
-- outbound managed-agent enrollment;
+Primary navigation is intentionally reduced:
+
+### Monitor
+
+- Dashboard.
+- Assets.
+- Problems.
+- Operational Events.
+
+### Configure
+
+- Monitoring.
+- Alerts.
+
+### Report
+
+- Availability & SLA.
+
+### Platform
+
+- Access.
+- Audit.
+- Settings.
+
+The following older top-level pages are now sub-views rather than separate product concepts:
+
+- Hosts + Inventory -> Assets.
+- Services + Topology + Discovery -> Asset sub-views.
+- Agents + Agentless + Credentials + Agent Policies -> Monitoring sub-views.
+- SNMP -> one Monitoring method rather than a separate product workflow.
+- Monitoring Rules + Notifications + Maintenance -> Alerts sub-views.
+- Integrations -> capability catalog under Settings.
+
+Legacy hash routes remain available where needed for compatibility, but the primary sidebar no longer exposes them independently.
+
+## Asset and discovery boundary
+
+`Device` remains the canonical asset record during the compatibility transition.
+
+Discovery now performs inventory discovery only:
+
+- private-CIDR enumeration;
+- hostname/MAC/open-port metadata;
+- device-class enrichment;
+- site assignment;
+- discovery observation events.
+
+Discovery no longer changes an asset from `up` to `down` (or `down` to `up`) merely because a scan does or does not receive a probe response. Runtime health belongs to configured monitoring methods.
+
+## Monitoring
+
+### Managed Agent
+
+- outbound enrollment;
 - per-agent credentials;
-- Windows Service/Linux systemd agent install;
-- managed-agent CPU/RAM/disk/network/uptime/process telemetry;
-- WinRM/CIM agentless Windows collection;
-- SSH agentless Linux/Unix collection;
-- generic SNMP agentless collection;
-- agentless three-failure down transition and successful recovery reset;
-- Prometheus metrics;
-- notification delivery worker;
-- Grafana dashboards;
-- SNMP exporter and blackbox exporter integration;
-- Docker Compose packaging.
+- Windows Service/Linux systemd installation;
+- CPU/RAM/disk/network/uptime/process telemetry;
+- centralized agent settings/policy;
+- revoke/re-enroll lifecycle.
+
+### Remote methods
+
+- WinRM/CIM for Windows;
+- SSH for Linux/Unix;
+- generic SNMP;
+- selected/discovered/entire-private-CIDR assignment;
+- encrypted credential profiles;
+- scheduled collection in `collector-worker`.
+
+New operator/API terminology uses **monitoring assignment** rather than **agentless monitor**. Legacy `/api/v1/agentless/*` APIs remain compatibility aliases while new clients use `/api/v1/monitoring/*`.
+
+## Per-assignment telemetry
+
+v0.4 adds `collector_telemetry_latest`, keyed by `monitor_id`.
+
+This fixes a structural problem in the older device-level `agentless_telemetry_latest` model: multiple methods on one asset no longer overwrite one another's latest sample.
+
+The old table is maintained temporarily as a compatibility aggregate for Host Detail and Prometheus export. WinRM/SSH data is preferred over generic SNMP unless the richer source becomes stale.
+
+## Health aggregation
+
+- an online Managed Agent is positive `up` evidence;
+- any healthy remote monitoring assignment is positive `up` evidence;
+- failure of one method does not mark the whole asset down while another enabled method remains healthy;
+- an asset transitions `down` only when every enabled remote assignment reaches the failure threshold and no Managed Agent is online;
+- assets without runtime evidence remain `unknown`;
+- service-level problems can make an otherwise reachable asset appear `degraded` in the UI.
+
+## Alerting
+
+SentinelView Control API is the single alerting source of truth:
+
+```text
+Telemetry
+  -> Monitoring Rules
+  -> Services
+  -> Problems
+  -> Notifications
+```
+
+Prometheus remains the time-series/history backend. Its Sentinel alert rule file is intentionally empty so Prometheus does not maintain competing alert thresholds.
+
+Implemented alerting behavior includes:
+
+- persistent Problem lifecycle;
+- acknowledgement;
+- maintenance suppression;
+- open/escalation/recovery/post-maintenance notification transitions;
+- webhook, Slack, Teams, Telegram and SMTP delivery;
+- bounded retry/backoff;
+- encrypted notification configuration;
+- SLA maintenance exclusion.
+
+## Workers and platform services
+
+Core Docker services:
+
+```text
+postgres
+control-api
+discovery-worker
+collector-worker
+notification-worker
+web-ui
+prometheus
+snmp-exporter
+blackbox-exporter
+grafana
+```
+
+`snmp-exporter` and `blackbox-exporter` are backend collection components. They are not separate operator product areas.
 
 ## Automated QA
 
@@ -79,8 +162,9 @@ The repository runs two complementary GitHub workflows.
 ### Core CI
 
 - Python API/unit/regression tests.
-- Go 1.25 module verification, unit tests and Linux/Windows cross-builds.
-- JavaScript syntax checks including the runtime operations enhancement module.
+- unified-monitoring boundary tests.
+- Go module verification, unit tests and Linux/Windows cross-builds.
+- JavaScript syntax checks.
 - configuration validation.
 
 ### Disposable integration CI
@@ -88,14 +172,25 @@ The repository runs two complementary GitHub workflows.
 - clean no-cache Docker application build;
 - real OpenSSH target collection;
 - real SNMP daemon collection;
-- agentless failure hysteresis and successful recovery;
+- failure hysteresis and successful recovery;
 - real local WinRM/CIM collection on a disposable Windows runner.
 
-The CI strategy intentionally supplies disposable external conditions that are not guaranteed to exist on a developer laptop. A developer therefore does not need host-installed Go, a permanent Windows WinRM VM, SSH server or SNMP appliance to validate those code paths.
+## Compatibility notes
+
+The v0.4 consolidation intentionally avoids a destructive database migration.
+
+Temporary compatibility items include:
+
+- table/class names containing `Agentless`;
+- legacy `/api/v1/agentless/*` endpoint aliases;
+- device-level aggregate telemetry used by existing Host Detail/Prometheus paths;
+- existing `Device.agent_*` and `Device.snmp_*` fields.
+
+These can be removed in a later schema-migration release after all consumers use the unified model.
 
 ## Current limitations
 
-v0.3.0 does not claim:
+SentinelView does not claim:
 
 - a commercial-scale vendor plugin catalog;
 - full automatic LLDP/CDP topology discovery;
@@ -103,10 +198,10 @@ v0.3.0 does not claim:
 - recurring maintenance recurrence rules beyond explicit start/end windows;
 - OIDC/LDAP/SAML;
 - fine-grained object-level RBAC;
-- remote collectors/distributed monitoring;
+- distributed remote collectors;
 - HA;
 - historical SLA data before state-transition recording began;
 - MSI/DEB/RPM release packages;
 - signed staged automatic agent updates.
 
-These remain explicit roadmap work rather than UI-only placeholders presented as completed features.
+These remain roadmap work rather than duplicate UI placeholders.
