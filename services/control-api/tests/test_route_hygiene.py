@@ -32,15 +32,21 @@ def test_modular_notification_and_maintenance_routes_are_effective():
         for route in routes
         if any(token in route.path for token in ("notification", "maintenance", "availability"))
     ]
+    modular = [
+        (route.path, tuple(sorted(route.methods or ())), _endpoint_name(route))
+        for route in routes
+        if route.endpoint.__module__ in {"app.notification_api", "app.maintenance_api"}
+    ]
+    diagnostics = {"operations": operations, "modular": modular}
 
     notification_key = ("/api/v1/notification-channels", ("POST",))
     maintenance_key = ("/api/v1/maintenance", ("POST",))
     availability_key = ("/api/v1/availability", ("GET",))
 
-    assert notification_key in endpoints, operations
-    assert maintenance_key in endpoints, operations
-    assert availability_key in endpoints, operations
+    assert notification_key in endpoints, diagnostics
+    assert maintenance_key in endpoints, diagnostics
+    assert availability_key in endpoints, diagnostics
 
-    assert endpoints[notification_key].startswith("app.notification_api."), operations
-    assert endpoints[maintenance_key].startswith("app.maintenance_api."), operations
-    assert endpoints[availability_key].startswith("app.maintenance_api."), operations
+    assert endpoints[notification_key].startswith("app.notification_api."), diagnostics
+    assert endpoints[maintenance_key].startswith("app.maintenance_api."), diagnostics
+    assert endpoints[availability_key].startswith("app.maintenance_api."), diagnostics
