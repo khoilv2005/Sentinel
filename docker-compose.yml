@@ -66,7 +66,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  agentless-worker:
+  collector-worker:
     image: sentinelview-control-api:0.3.0
     build:
       context: .

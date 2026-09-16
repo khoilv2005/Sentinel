@@ -26,6 +26,9 @@ def main() -> None:
             "https": False,
             "port": 5985,
             "validate_cert": False,
+            "operation_timeout_sec": 45,
+            "read_timeout_sec": 60,
+            "retries": 1,
         },
     )
     require(bool(data.get("hostname")), "WinRM collector did not return hostname")

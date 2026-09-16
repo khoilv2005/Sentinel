@@ -1,0 +1,64 @@
+from fastapi.routing import APIRoute, iter_route_contexts
+
+from app.main import app
+
+
+def _endpoint_name(route: APIRoute) -> str:
+    return f"{route.endpoint.__module__}.{route.endpoint.__name__}"
+
+
+def _effective_api_routes():
+    """Yield fully resolved API paths, including live included routers.
+
+    FastAPI 0.137+ keeps ``include_router()`` registrations as live included
+    routers instead of flattening every child into ``app.router.routes``.
+    ``iter_route_contexts`` is therefore the authoritative way to inspect the
+    effective routing table in tests.
+    """
+    for context in iter_route_contexts(app.routes):
+        route = context.route
+        if isinstance(route, APIRoute):
+            yield context.path, route
+
+
+def test_api_method_path_pairs_are_unique():
+    seen = set()
+    duplicates = []
+    for path, route in _effective_api_routes():
+        key = (path, tuple(sorted(route.methods or ())))
+        if key in seen:
+            duplicates.append((key, _endpoint_name(route)))
+        seen.add(key)
+
+    assert duplicates == []
+
+
+def test_modular_notification_and_maintenance_routes_are_effective():
+    routes = list(_effective_api_routes())
+    endpoints = {
+        (path, tuple(sorted(route.methods or ()))): _endpoint_name(route)
+        for path, route in routes
+    }
+    operations = [
+        (path, tuple(sorted(route.methods or ())), _endpoint_name(route))
+        for path, route in routes
+        if any(token in path for token in ("notification", "maintenance", "availability"))
+    ]
+    modular = [
+        (path, tuple(sorted(route.methods or ())), _endpoint_name(route))
+        for path, route in routes
+        if route.endpoint.__module__ in {"app.notification_api", "app.maintenance_api"}
+    ]
+    diagnostics = {"operations": operations, "modular": modular}
+
+    notification_key = ("/api/v1/notification-channels", ("POST",))
+    maintenance_key = ("/api/v1/maintenance", ("POST",))
+    availability_key = ("/api/v1/availability", ("GET",))
+
+    assert notification_key in endpoints, diagnostics
+    assert maintenance_key in endpoints, diagnostics
+    assert availability_key in endpoints, diagnostics
+
+    assert endpoints[notification_key].startswith("app.notification_api."), diagnostics
+    assert endpoints[maintenance_key].startswith("app.maintenance_api."), diagnostics
+    assert endpoints[availability_key].startswith("app.maintenance_api."), diagnostics
