@@ -15,7 +15,7 @@ jobs:
       - name: Fresh no-cache application build
         run: docker compose build --no-cache control-api web-ui
 
-  agentless-linux:
+  remote-collectors-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -55,14 +55,14 @@ jobs:
       - name: Real SSH SNMP and scheduler recovery integration
         env:
           PYTHONPATH: services/control-api
-          SENTINEL_DB_URL: sqlite:////tmp/sentinel-agentless-integration.db
-          SENTINEL_CREDENTIAL_SECRET: ci-agentless-integration-secret
+          SENTINEL_DB_URL: sqlite:////tmp/sentinel-collector-integration.db
+          SENTINEL_CREDENTIAL_SECRET: ci-collector-integration-secret
           SENTINEL_QA_SSH_USER: sentinelqa
           SENTINEL_QA_SSH_PORT: '2222'
           SENTINEL_QA_SNMP_COMMUNITY: sentinelqa
         run: python qa/integration/agentless_linux.py
 
-  agentless-winrm:
+  remote-collector-winrm:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
